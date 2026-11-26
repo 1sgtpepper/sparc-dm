@@ -145,36 +145,31 @@ def newton_raphson(
             else:
                 b_lo, f_lo = x, fx
         dfx = float(df(x))
+        dx = fx / dfx if (np.isfinite(dfx) and abs(dfx) >= 1e-14) else float("nan")
+        x_raw = x - dx
         used_bisection = False
-        if not np.isfinite(dfx) or abs(dfx) < 1e-14:
+        if not np.isfinite(x_raw):
             if not bracketed:
                 return RootResult(x, fx, k - 1, False, tuple(trace))
             x_next, used_bisection = 0.5 * (b_lo + b_hi), True
-        else:
-            dx = fx / dfx
-            x_raw = x - dx
-            if not np.isfinite(x_raw):
-                if not bracketed:
-                    return RootResult(x, fx, k - 1, False, tuple(trace))
-                x_next, used_bisection = 0.5 * (b_lo + b_hi), True
-            elif abs(dx) <= tol and (not bracketed or b_lo <= x_raw <= b_hi):
-                fx_raw = float(f(x_raw))
-                if not np.isfinite(fx_raw):
-                    return RootResult(x_raw, fx_raw, k, False, tuple(trace) + (x_raw,))
-                cur_bounds = (b_lo, b_hi) if bracketed else None
-                if fx_raw == 0.0 or abs(fx_raw) <= tol * f_scale or _root_witness(f, x_raw, fx_raw, dfx, tol, cur_bounds):
-                    trace.append(x_raw)
-                    return RootResult(x_raw, fx_raw, k, True, tuple(trace))
-                if bracketed and (x_raw <= b_lo or x_raw >= b_hi):
-                    x_next, used_bisection = 0.5 * (b_lo + b_hi), True
-                else:
-                    x, fx = x_raw, fx_raw
-                    trace.append(x)
-                    continue
-            elif bracketed and (x_raw <= b_lo or x_raw >= b_hi):
+        elif abs(dx) <= tol and (not bracketed or b_lo <= x_raw <= b_hi):
+            fx_raw = float(f(x_raw))
+            if not np.isfinite(fx_raw):
+                return RootResult(x_raw, fx_raw, k, False, tuple(trace) + (x_raw,))
+            cur_bounds = (b_lo, b_hi) if bracketed else None
+            if fx_raw == 0.0 or abs(fx_raw) <= tol * f_scale or _root_witness(f, x_raw, fx_raw, dfx, tol, cur_bounds):
+                trace.append(x_raw)
+                return RootResult(x_raw, fx_raw, k, True, tuple(trace))
+            if bracketed and (x_raw <= b_lo or x_raw >= b_hi):
                 x_next, used_bisection = 0.5 * (b_lo + b_hi), True
             else:
-                x_next = x_raw
+                x, fx = x_raw, fx_raw
+                trace.append(x)
+                continue
+        elif bracketed and (x_raw <= b_lo or x_raw >= b_hi):
+            x_next, used_bisection = 0.5 * (b_lo + b_hi), True
+        else:
+            x_next = x_raw
 
         x = x_next
         trace.append(x)
@@ -354,23 +349,14 @@ def conjugate_gradient(
             else (lambda t: float(loss_fn(x + t * d_hat)))
         )
         lo, hi, decreased = _bracket_ray(phi, fx, step_hint, max_step)
-        if not decreased:
+        line = brent_minimize(phi, lo, hi, tol=1e-9, max_iter=80) if decreased else None
+        if line is None or not np.isfinite(line.fun) or float(line.fun) >= fx:
             if not steepest:
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
             converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
-            return OptResult(
-                x, fx, k - 1 if converged else k, converged, g_norm, "machine_floor" if converged else "line_search_stalled"
-            )
-        line = brent_minimize(phi, lo, hi, tol=1e-9, max_iter=80)
-        if not np.isfinite(line.fun) or float(line.fun) >= fx:
-            if not steepest:
-                d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
-                continue
-            converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
-            return OptResult(
-                x, fx, k - 1 if converged else k, converged, g_norm, "machine_floor" if converged else "line_search_stalled"
-            )
+            reason = "machine_floor" if converged else "line_search_stalled"
+            return OptResult(x, fx, k - 1 if converged else k, converged, g_norm, reason)
         step_taken = float(line.x)
         step_hint = min(max_step, max(step_taken * 2.0, 1e-8))
         x_new = x + step_taken * d_hat
@@ -414,6 +400,26 @@ def halo_model_velocity(
     return total_velocity(baryonic_velocity_sq(galaxy, upsilon_disk), v_dm), v_dm
 
 
+def _halo_initial_starts(galaxy: GalaxyData, model_kind: str) -> list[np.ndarray]:
+    """Deterministic multi-start seeds spanning mid-scale, compact-core (ISO), and outer-scale basins."""
+    shape = 1.0 - np.arctan(1.0) if model_kind == "iso" else np.log(2.0) - 0.5
+    v_ref = max(float(np.max(galaxy.v_obs)), 10.0)
+    r_out = float(galaxy.rad_kpc[-1])
+    r_large = max(5.0 * r_out, 30.0)
+    starts = [
+        np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_s**2 * shape), r_s, 0.5]), LOG_LO, LOG_HI)
+        for r_s in (max(r_out * f, 0.3) for f in (0.25, 0.7))
+    ]
+    if model_kind == "iso":
+        r_small = max(min(r_out * 0.04, 0.5), 0.15)
+        starts.append(np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_small**2 * shape), r_small, 0.25]), LOG_LO, LOG_HI))
+        rho_large = 3.0 * v_ref**2 / (4.0 * np.pi * G_ASTRO * r_out**2)
+    else:
+        rho_large = v_ref**2 / (2.0 * np.pi * G_ASTRO * r_large * r_out)
+    starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
+    return starts
+
+
 def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray | None = None) -> HaloFit:
     """Fit ``[log10 rho, log10 r_scale, log10 upsilon_disk]`` via multi-start projected CG (4 ISO / 3 NFW starts)."""
     if model_kind not in HALO_VELOCITY:
@@ -425,26 +431,7 @@ def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray 
         vm, _ = halo_model_velocity(galaxy, model_kind, *(10.0**p))
         return float(np.sum(((galaxy.v_obs - vm) * inv_err) ** 2) * inv_dof)
 
-    shape = 1.0 - np.arctan(1.0) if model_kind == "iso" else np.log(2.0) - 0.5
-    v_ref = max(float(np.max(galaxy.v_obs)), 10.0)
-    r_out = float(galaxy.rad_kpc[-1])
-    if x0 is not None:
-        starts = [np.asarray(x0, dtype=np.float64)]
-    else:
-        # Span mid-scale, compact-core (ISO), and outer-scale basins to avoid local minima
-        r_large = max(5.0 * r_out, 30.0)
-        starts = [
-            np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_s**2 * shape), r_s, 0.5]), LOG_LO, LOG_HI)
-            for r_s in (max(r_out * f, 0.3) for f in (0.25, 0.7))
-        ]
-        if model_kind == "iso":
-            r_small = max(min(r_out * 0.04, 0.5), 0.15)
-            starts.append(np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_small**2 * shape), r_small, 0.25]), LOG_LO, LOG_HI))
-            rho_large = 3.0 * v_ref**2 / (4.0 * np.pi * G_ASTRO * r_out**2)
-            starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
-        else:
-            rho_large = v_ref**2 / (2.0 * np.pi * G_ASTRO * r_large * r_out)
-            starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
+    starts = [np.asarray(x0, dtype=np.float64)] if x0 is not None else _halo_initial_starts(galaxy, model_kind)
     best = min(
         (conjugate_gradient(loss, s, max_iter=500, max_step=4.0, bounds=(LOG_LO, LOG_HI)) for s in starts),
         key=lambda r: (not r.converged, r.fun),

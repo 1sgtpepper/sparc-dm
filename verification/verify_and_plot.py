@@ -67,46 +67,8 @@ def _quadrature_and_ode_convergence() -> dict[str, object]:
     }
 
 
-def verify_and_plot(output_dir: Path | str | None = None) -> Path:
-    """Run SPARC survey, run convergence checks, and render 300-DPI 4-panel summary."""
-    root = Path(__file__).resolve().parents[1]
-    out_dir = Path(output_dir) if output_dir is not None else root / "outputs"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    survey_data = run_survey(root / "data", out_dir / "sparc_results.json")
-
-    ngc = load_galaxy(root / "data" / "NGC3198_rotmod.dat")
-    dd = survey_data["deep_dives"]["NGC3198"]
+def _plot_ngc3198_panel(ax: plt.Axes, ngc, dd: dict[str, object]) -> None:
     ngc_bar, ngc_iso, ngc_nfw, cross = dd["baryons"], dd["iso"], dd["nfw"], dd["crossover"]
-
-    r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
-    v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
-    m_bar, _ = baryon_mass_and_potential(ngc, ngc_iso["upsilon_disk"])
-
-    def m_tot(r: float) -> float:
-        return m_bar(r) + float(iso_mass_exact(r, ngc_iso["rho0"], ngc_iso["rc"]))
-
-    tr_bar = rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps)
-    tr_dm_rk4 = rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
-    tr_dm_euler = euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
-
-    conv = _quadrature_and_ode_convergence()
-
-    plt.rcParams.update(
-        {
-            "font.size": 10.5,
-            "axes.titlesize": 11.5,
-            "axes.titleweight": "bold",
-            "axes.labelsize": 10.5,
-            "legend.fontsize": 8.4,
-            "xtick.labelsize": 9.2,
-            "ytick.labelsize": 9.2,
-        }
-    )
-
-    fig, axes = plt.subplots(2, 2, figsize=(12.2, 9.2), dpi=300)
-
-    # --- Panel A: NGC 3198 Rotation Curve (Baryons-only vs ISO vs NFW + Crossover) ---
-    ax = axes[0, 0]
     r = ngc.rad_kpc
     v_bar_only = total_velocity(baryonic_velocity_sq(ngc, ngc_bar["upsilon_disk"]), 0.0)
     v_bar_iso = total_velocity(baryonic_velocity_sq(ngc, ngc_iso["upsilon_disk"]), 0.0)
@@ -140,8 +102,8 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.legend(loc="lower right", frameon=True, framealpha=0.92, ncol=1)
     ax.grid(alpha=0.25)
 
-    # --- Panel B: 171-Galaxy SPARC Core vs Cusp chi^2 & Dark-Matter Fraction ---
-    ax = axes[0, 1]
+
+def _plot_survey_scatter_panel(fig: plt.Figure, ax: plt.Axes, survey_data: dict[str, object]) -> None:
     gals = survey_data["galaxies"]
     chi_iso = np.array([g["chi2_iso"] for g in gals], dtype=np.float64)
     chi_nfw = np.array([g["chi2_nfw"] for g in gals], dtype=np.float64)
@@ -176,8 +138,8 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_title("B. SPARC Survey: Core vs Cusp $\\chi^2_\\nu$ & Dark Fraction")
     ax.grid(True, which="both", alpha=0.22)
 
-    # --- Panel C: Convergence Orders (Simpson O(h^4) vs Trap O(h^2) & RK4 vs Verlet vs Euler) ---
-    ax = axes[1, 0]
+
+def _plot_convergence_panel(ax: plt.Axes, conv: dict[str, object]) -> None:
     ax.loglog(conv["h_norm_q"], conv["err_trap"], "s--", color="#d97706", lw=1.7, ms=5.5, label=f"Trapezoid mass (slope = {conv['slope_trap']:.2f})")
     ax.loglog(conv["h_norm_q"], conv["err_simp"], "o-", color="#1f5a8a", lw=2.0, ms=5.5, label=f"Simpson mass (slope = {conv['slope_simp']:.2f})")
     ax.loglog(conv["h_norm_o"], conv["err_euler"], "d:", color="#c0392b", lw=1.7, ms=5.5, label=f"Euler orbit (slope = {conv['slope_euler']:.2f})")
@@ -195,8 +157,21 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.legend(loc="lower right", frameon=True, framealpha=0.94, fontsize=8.0)
     ax.grid(True, which="both", alpha=0.25)
 
-    # --- Panel D: NGC 3198 2D Star Orbit at r0 = 25 kpc (Bound with DM vs Halo Removed) ---
-    ax = axes[1, 1]
+
+def _plot_orbit_panel(ax: plt.Axes, ngc, ngc_iso: dict[str, float], orb: dict[str, object]) -> None:
+    r0_kpc = float(orb["r0_kpc"])
+    v0_kms = float(orb["v0_kms"])
+    dt_gyr = float(orb["dt_gyr"])
+    n_steps = int(orb["n_steps"])
+    m_bar, _ = baryon_mass_and_potential(ngc, ngc_iso["upsilon_disk"])
+
+    def m_tot(r: float) -> float:
+        return m_bar(r) + float(iso_mass_exact(r, ngc_iso["rho0"], ngc_iso["rc"]))
+
+    tr_bar = rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps)
+    tr_dm_rk4 = rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
+    tr_dm_euler = euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
+
     theta = np.linspace(0.0, 2.0 * np.pi, 200)
     ax.plot(r0_kpc * np.cos(theta), r0_kpc * np.sin(theta), ":", color="#9ca3af", lw=1.1, label=f"Initial circle $r_0 = {r0_kpc:.0f}$ kpc")
     ax.plot(tr_dm_rk4[:, 0], tr_dm_rk4[:, 1], "-", color="#1f5a8a", lw=2.2, label="Baryons + ISO Halo (RK4, bound)")
@@ -233,6 +208,36 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_title(f"D. NGC 3198 Central-Force Orbit ($2.0$ Gyr, $r_0 = {r0_kpc:.0f}$ kpc)")
     ax.legend(loc="lower left", frameon=True, framealpha=0.92, fontsize=8.0)
     ax.grid(alpha=0.25)
+
+
+def verify_and_plot(output_dir: Path | str | None = None) -> Path:
+    """Run SPARC survey, run convergence checks, and render 300-DPI 4-panel summary."""
+    root = Path(__file__).resolve().parents[1]
+    out_dir = Path(output_dir) if output_dir is not None else root / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    survey_data = run_survey(root / "data", out_dir / "sparc_results.json")
+    ngc = load_galaxy(root / "data" / "NGC3198_rotmod.dat")
+    dd = survey_data["deep_dives"]["NGC3198"]
+    conv = _quadrature_and_ode_convergence()
+
+    plt.rcParams.update(
+        {
+            "font.size": 10.5,
+            "axes.titlesize": 11.5,
+            "axes.titleweight": "bold",
+            "axes.labelsize": 10.5,
+            "legend.fontsize": 8.4,
+            "xtick.labelsize": 9.2,
+            "ytick.labelsize": 9.2,
+        }
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=(12.2, 9.2), dpi=300)
+    _plot_ngc3198_panel(axes[0, 0], ngc, dd)
+    _plot_survey_scatter_panel(fig, axes[0, 1], survey_data)
+    _plot_convergence_panel(axes[1, 0], conv)
+    _plot_orbit_panel(axes[1, 1], ngc, dd["iso"], survey_data["orbit_test"])
 
     fig.tight_layout(pad=1.6)
     fig_path = out_dir / "sparc_summary.png"

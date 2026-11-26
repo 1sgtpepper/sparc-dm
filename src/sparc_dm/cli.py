@@ -120,6 +120,96 @@ def _deep_dive(gal: GalaxyData, fb: HaloFit, fi: HaloFit, fn: HaloFit) -> dict[s
     }
 
 
+def _galaxy_row(name: str, gal: GalaxyData, fb: HaloFit, fi: HaloFit, fn: HaloFit) -> dict[str, object]:
+    return {
+        "name": name,
+        "n_points": int(gal.rad_kpc.size),
+        "r_outer_kpc": float(gal.rad_kpc[-1]),
+        "chi2_baryons": fb.chi2_red,
+        "chi2_iso": fi.chi2_red,
+        "chi2_nfw": fn.chi2_red,
+        "baryons_converged": bool(fb.opt.converged),
+        "baryons_iterations": int(fb.opt.iterations),
+        "baryons_stop_reason": fb.opt.stop_reason,
+        "iso_converged": bool(fi.opt.converged),
+        "iso_iterations": int(fi.opt.iterations),
+        "iso_grad_norm": fi.opt.grad_norm,
+        "iso_stop_reason": fi.opt.stop_reason,
+        "nfw_converged": bool(fn.opt.converged),
+        "nfw_iterations": int(fn.opt.iterations),
+        "nfw_grad_norm": fn.opt.grad_norm,
+        "nfw_stop_reason": fn.opt.stop_reason,
+        "f_dm_outer_iso": _dm_frac(gal, fi),
+        "f_dm_outer_nfw": _dm_frac(gal, fn),
+        "iso_rho0": fi.rho0,
+        "iso_rc": fi.r_scale,
+        "iso_upsilon_d": fi.upsilon_disk,
+        "iso_bounds_hit": hit_bounds_labels(fi.opt.x, (LOG_LO, LOG_HI), ISO_PARAM_LABELS),
+        "nfw_rhos": fn.rho0,
+        "nfw_rs": fn.r_scale,
+        "nfw_upsilon_d": fn.upsilon_disk,
+        "nfw_bounds_hit": hit_bounds_labels(fn.opt.x, (LOG_LO, LOG_HI), NFW_PARAM_LABELS),
+    }
+
+
+def _ngc3198_orbit_test(ngc: GalaxyData, ngc_iso: HaloFit) -> dict[str, object]:
+    r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
+    v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
+    m_bar, p_bar = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
+
+    def m_tot(r: float) -> float:
+        return m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
+
+    def p_tot(r: float) -> float:
+        return p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
+
+    p_bar_r0 = p_bar(r0_kpc)
+    return {
+        "galaxy": "NGC3198",
+        "approximation": "central_force_spherical_equivalent_baryons",
+        "upsilon_disk": ngc_iso.upsilon_disk,
+        "baryons_only_v_esc_kms": float(np.sqrt(max(-2.0 * p_bar_r0, 0.0))),
+        "baryons_only_specific_energy": float(0.5 * v0_kms**2 + p_bar_r0),
+        "r0_kpc": r0_kpc,
+        "v0_kms": v0_kms,
+        "dt_gyr": dt_gyr,
+        "n_steps": n_steps,
+        "baryons_only_rk4": orbit_diagnostics(rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps), p_bar),
+        "dark_halo_rk4": orbit_diagnostics(rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
+        "dark_halo_verlet": orbit_diagnostics(velocity_verlet_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
+        "dark_halo_euler": orbit_diagnostics(euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
+    }
+
+
+def _summarize_survey(rows: list[dict[str, object]]) -> dict[str, object]:
+    def _count_hits(key: str, labels: tuple[str, ...]) -> dict[str, int]:
+        return {p: sum(1 for r in rows if any(h.startswith(f"{p}_") for h in r[key])) for p in labels}
+
+    iso_gnorms = [r["iso_grad_norm"] for r in rows if r["iso_grad_norm"] is not None]
+    nfw_gnorms = [r["nfw_grad_norm"] for r in rows if r["nfw_grad_norm"] is not None]
+    return {
+        "n_galaxies": len(rows),
+        "iso_wins": sum(1 for r in rows if r["chi2_iso"] < r["chi2_nfw"]),
+        "nfw_wins": sum(1 for r in rows if r["chi2_nfw"] < r["chi2_iso"]),
+        "non_converged_baryons": sum(1 for r in rows if not r["baryons_converged"]),
+        "non_converged_iso": sum(1 for r in rows if not r["iso_converged"]),
+        "non_converged_nfw": sum(1 for r in rows if not r["nfw_converged"]),
+        "iso_machine_floor_stops": sum(1 for r in rows if r["iso_stop_reason"] == "machine_floor"),
+        "nfw_machine_floor_stops": sum(1 for r in rows if r["nfw_stop_reason"] == "machine_floor"),
+        "median_grad_norm_iso": float(np.median(iso_gnorms)) if iso_gnorms else None,
+        "max_grad_norm_iso": float(np.max(iso_gnorms)) if iso_gnorms else None,
+        "median_grad_norm_nfw": float(np.median(nfw_gnorms)) if nfw_gnorms else None,
+        "max_grad_norm_nfw": float(np.max(nfw_gnorms)) if nfw_gnorms else None,
+        "iso_bounds_hits": _count_hits("iso_bounds_hit", ISO_PARAM_LABELS),
+        "nfw_bounds_hits": _count_hits("nfw_bounds_hit", NFW_PARAM_LABELS),
+        "median_chi2_baryons": float(np.median([r["chi2_baryons"] for r in rows])),
+        "median_chi2_iso": float(np.median([r["chi2_iso"] for r in rows])),
+        "median_chi2_nfw": float(np.median([r["chi2_nfw"] for r in rows])),
+        "median_f_dm_outer_iso": float(np.median([r["f_dm_outer_iso"] for r in rows])),
+        "median_f_dm_outer_nfw": float(np.median([r["f_dm_outer_nfw"] for r in rows])),
+    }
+
+
 def run_survey(data_dir: str | Path | None = None, output_path: str | Path | None = None) -> dict[str, object]:
     """Run SPARC survey, deep dives (NGC3198/DDO154 if present), and NGC3198 outer-star orbit test."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -130,104 +220,19 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
         raise ValueError(f"No galaxies with >= 5 radial measurements found in {target_dir}")
     out_file = Path(output_path) if output_path is not None else (root / "outputs" / "sparc_results.json")
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    rows, fits = [], {}
+
+    rows: list[dict[str, object]] = []
+    fits: dict[str, tuple[HaloFit, HaloFit, HaloFit]] = {}
     for name, gal in catalog.items():
         fb = baryonic_only_fit(gal)
         fi = fit_galaxy_halo(gal, "iso")
         fn = fit_galaxy_halo(gal, "nfw")
         fits[name] = (fb, fi, fn)
-        iso_hits = hit_bounds_labels(fi.opt.x, (LOG_LO, LOG_HI), ISO_PARAM_LABELS)
-        nfw_hits = hit_bounds_labels(fn.opt.x, (LOG_LO, LOG_HI), NFW_PARAM_LABELS)
-        rows.append({
-            "name": name,
-            "n_points": int(gal.rad_kpc.size),
-            "r_outer_kpc": float(gal.rad_kpc[-1]),
-            "chi2_baryons": fb.chi2_red,
-            "chi2_iso": fi.chi2_red,
-            "chi2_nfw": fn.chi2_red,
-            "baryons_converged": bool(fb.opt.converged),
-            "baryons_iterations": int(fb.opt.iterations),
-            "baryons_stop_reason": fb.opt.stop_reason,
-            "iso_converged": bool(fi.opt.converged),
-            "iso_iterations": int(fi.opt.iterations),
-            "iso_grad_norm": fi.opt.grad_norm,
-            "iso_stop_reason": fi.opt.stop_reason,
-            "nfw_converged": bool(fn.opt.converged),
-            "nfw_iterations": int(fn.opt.iterations),
-            "nfw_grad_norm": fn.opt.grad_norm,
-            "nfw_stop_reason": fn.opt.stop_reason,
-            "f_dm_outer_iso": _dm_frac(gal, fi),
-            "f_dm_outer_nfw": _dm_frac(gal, fn),
-            "iso_rho0": fi.rho0,
-            "iso_rc": fi.r_scale,
-            "iso_upsilon_d": fi.upsilon_disk,
-            "iso_bounds_hit": iso_hits,
-            "nfw_rhos": fn.rho0,
-            "nfw_rs": fn.r_scale,
-            "nfw_upsilon_d": fn.upsilon_disk,
-            "nfw_bounds_hit": nfw_hits,
-        })
+        rows.append(_galaxy_row(name, gal, fb, fi, fn))
 
-    orbit_test: dict[str, object] | None = None
-    if "NGC3198" in catalog:
-        ngc = catalog["NGC3198"]
-        _, ngc_iso, _ = fits["NGC3198"]
-        r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
-        v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
-        m_bar, p_bar = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
-
-        def m_tot(r: float) -> float:
-            return m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
-
-        def p_tot(r: float) -> float:
-            return p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
-
-        p_bar_r0 = p_bar(r0_kpc)
-        orbit_test = {
-            "galaxy": "NGC3198",
-            "approximation": "central_force_spherical_equivalent_baryons",
-            "upsilon_disk": ngc_iso.upsilon_disk,
-            "baryons_only_v_esc_kms": float(np.sqrt(max(-2.0 * p_bar_r0, 0.0))),
-            "baryons_only_specific_energy": float(0.5 * v0_kms**2 + p_bar_r0),
-            "r0_kpc": r0_kpc,
-            "v0_kms": v0_kms,
-            "dt_gyr": dt_gyr,
-            "n_steps": n_steps,
-            "baryons_only_rk4": orbit_diagnostics(rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps), p_bar),
-            "dark_halo_rk4": orbit_diagnostics(rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
-            "dark_halo_verlet": orbit_diagnostics(velocity_verlet_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
-            "dark_halo_euler": orbit_diagnostics(euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
-        }
-
-    def _count_hits(key: str, labels: tuple[str, ...]) -> dict[str, int]:
-        return {p: sum(1 for r in rows if any(h.startswith(f"{p}_") for h in r[key])) for p in labels}
-
-    iso_wins = sum(1 for r in rows if r["chi2_iso"] < r["chi2_nfw"])
-    nfw_wins = sum(1 for r in rows if r["chi2_nfw"] < r["chi2_iso"])
-    iso_gnorms = [r["iso_grad_norm"] for r in rows if r["iso_grad_norm"] is not None]
-    nfw_gnorms = [r["nfw_grad_norm"] for r in rows if r["nfw_grad_norm"] is not None]
+    orbit_test = _ngc3198_orbit_test(catalog["NGC3198"], fits["NGC3198"][1]) if "NGC3198" in catalog else None
     results: dict[str, object] = {
-        "survey": {
-            "n_galaxies": len(rows),
-            "iso_wins": iso_wins,
-            "nfw_wins": nfw_wins,
-            "non_converged_baryons": sum(1 for r in rows if not r["baryons_converged"]),
-            "non_converged_iso": sum(1 for r in rows if not r["iso_converged"]),
-            "non_converged_nfw": sum(1 for r in rows if not r["nfw_converged"]),
-            "iso_machine_floor_stops": sum(1 for r in rows if r["iso_stop_reason"] == "machine_floor"),
-            "nfw_machine_floor_stops": sum(1 for r in rows if r["nfw_stop_reason"] == "machine_floor"),
-            "median_grad_norm_iso": float(np.median(iso_gnorms)) if iso_gnorms else None,
-            "max_grad_norm_iso": float(np.max(iso_gnorms)) if iso_gnorms else None,
-            "median_grad_norm_nfw": float(np.median(nfw_gnorms)) if nfw_gnorms else None,
-            "max_grad_norm_nfw": float(np.max(nfw_gnorms)) if nfw_gnorms else None,
-            "iso_bounds_hits": _count_hits("iso_bounds_hit", ISO_PARAM_LABELS),
-            "nfw_bounds_hits": _count_hits("nfw_bounds_hit", NFW_PARAM_LABELS),
-            "median_chi2_baryons": float(np.median([r["chi2_baryons"] for r in rows])),
-            "median_chi2_iso": float(np.median([r["chi2_iso"] for r in rows])),
-            "median_chi2_nfw": float(np.median([r["chi2_nfw"] for r in rows])),
-            "median_f_dm_outer_iso": float(np.median([r["f_dm_outer_iso"] for r in rows])),
-            "median_f_dm_outer_nfw": float(np.median([r["f_dm_outer_nfw"] for r in rows])),
-        },
+        "survey": _summarize_survey(rows),
         "deep_dives": {g: _deep_dive(catalog[g], *fits[g]) for g in ("NGC3198", "DDO154") if g in catalog},
         "orbit_test": orbit_test,
         "galaxies": rows,
