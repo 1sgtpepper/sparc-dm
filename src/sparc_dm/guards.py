@@ -204,7 +204,7 @@ def active_set_changed(x_old: np.ndarray, x_new: np.ndarray, bounds: BoundsPair)
 
 
 def hit_bounds_labels(x: np.ndarray, bounds: BoundsPair, labels: tuple[str, ...], tol: float = 1e-4) -> list[str]:
-    """Return bound-hit tags like ``upsilon_d_lo`` or ``r_scale_hi`` for coordinates within ``tol``."""
+    """Return bound-hit tags like ``upsilon_d_lo`` or ``rs_hi`` for coordinates within ``tol``."""
     if bounds is None:
         return []
     lo, hi = bounds

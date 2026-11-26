@@ -85,7 +85,7 @@ def test_baryonic_failure_dark_halo_fits_and_nfw_trap() -> None:
     fit_ugc7577 = fit_galaxy_halo(load_galaxy(DATA_DIR / "UGC07577_rotmod.dat"), "iso")
     assert fit_ugc7577.opt.converged and fit_ugc7577.chi2_red < 0.14
 
-    # Verify the previously stalling multi-valley galaxies converge cleanly
+    # Verify multi-valley spirals converge cleanly for both halo profiles
     for name in ("NGC5055", "NGC5985", "NGC7814", "UGC03205"):
         gal_v = load_galaxy(DATA_DIR / f"{name}_rotmod.dat")
         for k in ("iso", "nfw"):
