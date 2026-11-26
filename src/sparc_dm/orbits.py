@@ -21,7 +21,7 @@ def accel(pos: np.ndarray, mass_fn: MassFunc) -> np.ndarray:
 
 
 def iso_potential(r: float, rho0: float, rc: float) -> float:
-    """Analytical ISO gravitational potential ``Phi(r) = 4*pi*G*rho0*rc^2 * (0.5 ln(1+x^2) + arctan(x)/x)``."""
+    """Analytical ISO gravitational potential ``4*pi*G*rho0*rc^2 * (0.5 ln(1+x^2) + arctan(x)/x)`` (up to a constant)."""
     return float(4.0 * np.pi * G_ASTRO * rho0 * (rc**2) * safe_iso_potential_term(r, rho0, rc))
 
 

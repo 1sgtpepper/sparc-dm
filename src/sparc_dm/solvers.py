@@ -44,6 +44,8 @@ class OptResult:
 
 @dataclass(frozen=True)
 class HaloFit:
+    """Fitted halo/baryon parameters (``rho0``/``r_scale`` hold ``rho0, rc`` for ISO, ``rhos, rs`` for NFW)."""
+
     model_kind: str
     rho0: float
     r_scale: float
@@ -222,7 +224,11 @@ def conjugate_gradient(
     max_step: float = 10.0,
     bounds: BoundsPair = None,
 ) -> OptResult:
-    """Polak-Ribiere+ nonlinear CG with finite-diff gradient, monotone Brent search, and optional box bounds."""
+    """Projected Polak-Ribiere+ CG with finite-diff gradient, monotone Brent line search, and combined stopping rule.
+
+    Converges when projected ``||g|| < tol``, when ``||dx|| < 1e-9`` and ``|df| <= 1e-12*max(1, |f|)`` with
+    ``||g|| < 1e-3``, or at a verified convex machine-floor minimum (``||g|| < 1e-3``).
+    """
     x, n_max, b_pair = check_cg_inputs(x0, tol, max_iter, max_step, bounds)
     fx = float(loss_fn(x))
     g = project_box_vector(x, _gradient(loss_fn, x, b_pair), b_pair, flip=1.0)
@@ -292,7 +298,7 @@ def halo_model_velocity(
 
 
 def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray | None = None) -> HaloFit:
-    """Fit ``[log10 rho0, log10 r_scale, log10 upsilon_disk]`` by multi-start projected CG."""
+    """Fit ``[log10 rho, log10 r_scale, log10 upsilon_disk]`` via multi-start projected CG (4 ISO / 3 NFW starts)."""
     if model_kind not in HALO_VELOCITY:
         raise ValueError(f"Unsupported model_kind: {model_kind!r}")
     inv_err = 1.0 / galaxy.v_err
