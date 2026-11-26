@@ -251,14 +251,15 @@ def conjugate_gradient(
                 continue
             converged = _at_machine_floor(loss_fn, x, d_hat, fx, float(np.linalg.norm(g)), b_pair)
             return OptResult(x, fx, k - 1 if converged else k, converged)
-        line = brent_minimize(phi, lo, hi, tol=1e-7, max_iter=60)
+        line = brent_minimize(phi, lo, hi, tol=1e-9, max_iter=80)
         if not np.isfinite(line.fun) or float(line.fun) >= fx:
             if not steepest:
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
-            return OptResult(x, fx, k, False)
+            converged = _at_machine_floor(loss_fn, x, d_hat, fx, float(np.linalg.norm(g)), b_pair)
+            return OptResult(x, fx, k - 1 if converged else k, converged)
         step_taken = float(line.x)
-        step_hint = min(max_step, max(step_taken * 2.0, 1e-7))
+        step_hint = min(max_step, max(step_taken * 2.0, 1e-8))
         x_new = x + step_taken * d_hat
         if b_pair is not None:
             x_new = np.clip(x_new, b_pair[0], b_pair[1])
@@ -275,7 +276,7 @@ def conjugate_gradient(
         dx_norm, df_abs = float(np.linalg.norm(x_new - x)), abs(fx - f_new)
         x, fx, g, steepest = x_new, f_new, g_new, (beta == 0.0)
         g_norm = float(np.linalg.norm(g))
-        if g_norm < tol or (dx_norm < 1e-7 and df_abs <= 1e-10 * max(1.0, abs(fx)) and g_norm < 1e-2):
+        if g_norm < tol or (dx_norm < 1e-9 and df_abs <= 1e-12 * max(1.0, abs(fx)) and g_norm < 1e-3):
             return OptResult(x, fx, k, True)
     return OptResult(x, fx, n_max, False)
 
@@ -291,7 +292,7 @@ def halo_model_velocity(
 
 
 def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray | None = None) -> HaloFit:
-    """Fit ``[log10 rho0, log10 r_scale, log10 upsilon_disk]`` by projected CG minimization of reduced chi^2."""
+    """Fit ``[log10 rho0, log10 r_scale, log10 upsilon_disk]`` by multi-start projected CG."""
     if model_kind not in HALO_VELOCITY:
         raise ValueError(f"Unsupported model_kind: {model_kind!r}")
     inv_err = 1.0 / galaxy.v_err
@@ -306,12 +307,17 @@ def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray 
     if x0 is not None:
         starts = [np.asarray(x0, dtype=np.float64)]
     else:
+        r_large = max(5.0 * r_out, 30.0)
         starts = [
             np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_s**2 * shape), r_s, 0.5]), LOG_LO, LOG_HI)
             for r_s in (max(r_out * f, 0.3) for f in (0.25, 0.7))
         ]
-        if model_kind == "nfw":
-            r_large = max(5.0 * r_out, 30.0)
+        if model_kind == "iso":
+            r_small = max(min(r_out * 0.04, 0.5), 0.15)
+            starts.append(np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_small**2 * shape), r_small, 0.25]), LOG_LO, LOG_HI))
+            rho_large = 3.0 * v_ref**2 / (4.0 * np.pi * G_ASTRO * r_out**2)
+            starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
+        else:
             rho_large = v_ref**2 / (2.0 * np.pi * G_ASTRO * r_large * r_out)
             starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
     best = min(

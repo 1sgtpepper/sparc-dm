@@ -84,6 +84,5 @@ def orbit_diagnostics(traj: np.ndarray, pot_fn: PotFunc) -> dict[str, float]:
         "r_final_ratio": float(r[-1] / r[0]),
         "abs_E_err": max_abs_e,
         "rel_K_err": float(max_abs_e / max(float(kin[0]), 1e-12)),
-        "rel_E_err": float(max_abs_e / max(abs(float(energy[0])), 1e-12)),
         "rel_L_err": float(np.max(np.abs(ang_mom - ang_mom[0])) / max(abs(float(ang_mom[0])), 1e-12)),
     }

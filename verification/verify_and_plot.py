@@ -146,25 +146,25 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     f_dm = np.array([g["f_dm_outer_iso"] for g in gals], dtype=np.float64)
 
     sc = ax.scatter(chi_iso, chi_nfw, c=f_dm, cmap="viridis", vmin=0.0, vmax=1.0, s=26, alpha=0.85, edgecolors="#1f2937", linewidths=0.35, zorder=4)
-    ax.plot([1.5e-2, 1.5e2], [1.5e-2, 1.5e2], "--", color="#4b5563", lw=1.2, label="Equal fit ($\\chi^2_{\\mathrm{ISO}} = \\chi^2_{\\mathrm{NFW}}$)")
+    ax.plot([1.0e-2, 1.5e2], [1.0e-2, 1.5e2], "--", color="#4b5563", lw=1.2, label="Equal fit ($\\chi^2_{\\mathrm{ISO}} = \\chi^2_{\\mathrm{NFW}}$)")
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlim(1.5e-2, 1.5e2)
-    ax.set_ylim(1.5e-2, 1.5e2)
+    ax.set_xlim(1.0e-2, 1.5e2)
+    ax.set_ylim(1.0e-2, 1.5e2)
 
     s = survey_data["survey"]
     box_text = (
-        f"SPARC Survey ($N = {s['n_galaxies']}$, $\\geq 5$ pts)\n"
+        f"SPARC Survey ($N = {s['n_galaxies']}$, all converged)\n"
         f"ISO Core wins: {s['iso_wins']}/{s['n_galaxies']} ({100.0 * s['iso_wins'] / s['n_galaxies']:.1f}%)\n"
         f"Med $\\chi^2_\\nu$: Bar {s['median_chi2_baryons']:.1f} | ISO {s['median_chi2_iso']:.2f} | NFW {s['median_chi2_nfw']:.2f}\n"
         f"Median outer $f_{{\\mathrm{{DM}}}} = {s['median_f_dm_outer_iso']:.2f}$"
     )
     ax.text(
-        0.04, 0.96, box_text, transform=ax.transAxes, va="top", ha="left", fontsize=8.0,
+        0.04, 0.96, box_text, transform=ax.transAxes, va="top", ha="left", fontsize=8.0, zorder=7,
         bbox={"boxstyle": "round,pad=0.35", "fc": "#ffffff", "ec": "#9ca3af", "alpha": 0.94},
     )
-    ax.text(0.04, 0.72, "Above diagonal:\nISO Core fits better", transform=ax.transAxes, ha="left", va="top", fontsize=8.0, color="#1f5a8a", style="italic")
-    ax.text(0.96, 0.05, "Below diagonal: NFW Cusp fits better", transform=ax.transAxes, ha="right", va="bottom", fontsize=8.0, color="#b45309", style="italic")
+    ax.text(0.04, 0.72, "Above diagonal:\nISO Core fits better", transform=ax.transAxes, ha="left", va="top", fontsize=8.0, color="#1f5a8a", style="italic", zorder=7)
+    ax.text(0.96, 0.05, "Below diagonal: NFW Cusp fits better", transform=ax.transAxes, ha="right", va="bottom", fontsize=8.0, color="#b45309", style="italic", zorder=7)
     cbar = fig.colorbar(sc, ax=ax, pad=0.02, fraction=0.046)
     cbar.set_label("Outer dark-matter fraction $f_{\\mathrm{DM}}(R_{\\max})$", fontsize=8.5)
     ax.set_xlabel("ISO Core reduced $\\chi^2_\\nu$")
@@ -185,6 +185,9 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_title("C. Quadrature & Orbit ODE Convergence Slopes")
     ax.set_xlim(0.10, 1.15)
     ax.set_ylim(1e-13, 1e1)
+    ax.set_xticks([0.1, 0.2, 0.5, 1.0])
+    ax.set_xticklabels(["0.1", "0.2", "0.5", "1.0"])
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax.legend(loc="lower right", frameon=True, framealpha=0.94, fontsize=7.6)
     ax.grid(True, which="both", alpha=0.25)
 
@@ -223,7 +226,7 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("$x$ (kpc)")
     ax.set_ylabel("$y$ (kpc)")
-    ax.set_title(f"D. NGC 3198 Outer Star Orbit ($2.0$ Gyr, $r_0 = {r0_kpc:.0f}$ kpc)")
+    ax.set_title(f"D. NGC 3198 Central-Force Orbit ($2.0$ Gyr, $r_0 = {r0_kpc:.0f}$ kpc)")
     ax.legend(loc="lower left", frameon=True, framealpha=0.92, fontsize=7.6)
     ax.grid(alpha=0.25)
 

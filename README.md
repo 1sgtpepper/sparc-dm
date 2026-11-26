@@ -1,6 +1,6 @@
 # sparc-dm
 
-Dark-matter halo rotation-curve modeling, numerical quadrature, nonlinear optimization, and 2D galactic test-particle orbit integration across the 175-galaxy [SPARC database](http://astroweb.cwru.edu/SPARC/).
+Dark-matter halo rotation-curve modeling, numerical quadrature, nonlinear optimization, and central-force NGC 3198 orbit integration using the 175-galaxy [SPARC database](http://astroweb.cwru.edu/SPARC/) (171 galaxies with at least five radial measurements analyzed in the survey).
 
 ![SPARC Summary](outputs/sparc_summary.png)
 
@@ -30,4 +30,4 @@ with $G = 4.30091 \times 10^{-6}\text{ kpc (km/s)}^2\,M_\odot^{-1}$. All numeric
 | `src/sparc_dm/orbits.py` | 2D galactic test-particle ODE solvers (Euler, RK4, Velocity Verlet) and conservation diagnostics. |
 | `src/sparc_dm/cli.py` | End-to-end 171-galaxy SPARC survey, NGC 3198 / DDO 154 cases, spherical-equivalent NGC 3198 orbit test, and JSON report (`outputs/sparc_results.json`). |
 | `src/sparc_dm/guards.py` | Input validation, small-$r$ Taylor series, overflow safeguards, and box-bound helpers. |
-| `verification/verify_and_plot.py` | Convergence audits and 4-panel summary figure generator (`outputs/sparc_summary.png`). |
+| `verification/verify_and_plot.py` | Convergence checks and 4-panel summary figure generator (`outputs/sparc_summary.png`). |

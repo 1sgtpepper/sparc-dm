@@ -79,6 +79,12 @@ def test_baryonic_failure_dark_halo_fits_and_nfw_trap() -> None:
         fit_nfw = fit_galaxy_halo(load_galaxy(DATA_DIR / f"{name}_rotmod.dat"), "nfw")
         assert fit_nfw.opt.converged and fit_nfw.chi2_red < upper
 
+    # Verify compact-core & outer-scale multi-start ISO fits avoid suboptimal basins
+    fit_ngc2998 = fit_galaxy_halo(load_galaxy(DATA_DIR / "NGC2998_rotmod.dat"), "iso")
+    assert fit_ngc2998.opt.converged and fit_ngc2998.chi2_red < 1.1
+    fit_ugc7577 = fit_galaxy_halo(load_galaxy(DATA_DIR / "UGC07577_rotmod.dat"), "iso")
+    assert fit_ugc7577.opt.converged and fit_ugc7577.chi2_red < 0.14
+
     # Verify the previously stalling multi-valley galaxies converge cleanly
     for name in ("NGC5055", "NGC5985", "NGC7814", "UGC03205"):
         gal_v = load_galaxy(DATA_DIR / f"{name}_rotmod.dat")
@@ -143,10 +149,10 @@ def test_ngc3198_orbits_and_baryon_potential_consistency() -> None:
     diag_bar_rk4 = orbit_diagnostics(rk4_orbit(r0, v0, m_bar, dt, n_steps), p_bar)
     diag_rep = orbit_diagnostics(rk4_orbit(r0, v0, lambda r: -m_tot(r), dt, n_steps), lambda r: -p_tot(r))
 
-    assert diag_dm_rk4["r_max_ratio"] < 1.2 and 0.85 < diag_dm_rk4["r_final_ratio"] < 1.15 and diag_dm_rk4["rel_E_err"] < 1e-4
-    assert diag_dm_verlet["r_max_ratio"] < 1.2 and diag_dm_verlet["rel_E_err"] < 1e-4 and diag_dm_verlet["rel_L_err"] < 1e-13
-    assert diag_dm_euler["r_max_ratio"] > 1.3 and diag_dm_euler["rel_E_err"] > 0.1
-    assert diag_bar_rk4["r_final_ratio"] > 1.8 and diag_bar_rk4["rel_E_err"] < 1e-4
+    assert diag_dm_rk4["r_max_ratio"] < 1.2 and 0.85 < diag_dm_rk4["r_final_ratio"] < 1.15 and diag_dm_rk4["rel_K_err"] < 1e-4
+    assert diag_dm_verlet["r_max_ratio"] < 1.2 and diag_dm_verlet["rel_K_err"] < 1e-4 and diag_dm_verlet["rel_L_err"] < 1e-13
+    assert diag_dm_euler["r_max_ratio"] > 1.3 and diag_dm_euler["rel_K_err"] > 0.5
+    assert diag_bar_rk4["r_final_ratio"] > 1.8 and diag_bar_rk4["rel_K_err"] < 1e-4
     assert diag_rep["r_final_ratio"] > 15.0 and diag_rep["r_final_ratio"] > 2.0 * diag_bar_rk4["r_final_ratio"]
 
 
@@ -162,6 +168,8 @@ def test_live_survey_and_source_isolation(tmp_path: Path) -> None:
     data = json.loads(out_json.read_text(encoding="utf-8"))
     assert data["survey"]["n_galaxies"] == 3
     assert data["survey"]["non_converged_iso"] == 0 and data["survey"]["non_converged_nfw"] == 0 and data["survey"]["non_converged_baryons"] == 0
+    assert set(data["survey"]["iso_bounds_hits"]) == {"rho0", "rc", "upsilon_d"}
+    assert set(data["survey"]["nfw_bounds_hits"]) == {"rhos", "rs", "upsilon_d"}
     assert data["survey"]["median_chi2_baryons"] > 10.0 * data["survey"]["median_chi2_iso"]
     assert data["deep_dives"]["NGC3198"]["crossover"]["dm_dominated_everywhere"] is False
     assert 5.0 < data["deep_dives"]["NGC3198"]["crossover"]["bisection_kpc"] < 9.0

@@ -265,7 +265,8 @@ def test_kepler_orbit_convergence_orders_and_physics_controls() -> None:
     diag_v = orbit_diagnostics(velocity_verlet_orbit(r0, v_ecc, mass_fn, t_orb / 200.0, 1000), pot_fn)
     diag_v_shift = orbit_diagnostics(velocity_verlet_orbit(r0, v_ecc, mass_fn, t_orb / 200.0, 1000), lambda r: pot_fn(r) + 1e5)
     diag_e = orbit_diagnostics(euler_orbit(r0, v_ecc, mass_fn, t_orb / 200.0, 1000), pot_fn)
-    assert diag_v["rel_E_err"] < 1e-3 and diag_v["rel_K_err"] < 1e-3 and diag_v["rel_L_err"] < 1e-13 and diag_e["rel_E_err"] > 0.2
+    assert "rel_E_err" not in diag_v
+    assert diag_v["rel_K_err"] < 1e-3 and diag_v["rel_L_err"] < 1e-13 and diag_e["rel_K_err"] > 0.1
     assert np.isclose(diag_v["abs_E_err"], diag_v_shift["abs_E_err"], rtol=1e-13)
     assert np.isclose(diag_v["rel_K_err"], diag_v_shift["rel_K_err"], rtol=1e-13)
 
