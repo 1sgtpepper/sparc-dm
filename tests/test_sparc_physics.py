@@ -136,9 +136,9 @@ def test_ngc3198_orbits_and_baryon_potential_consistency() -> None:
     v0 = float(np.interp(r0, ngc.rad_kpc, ngc.v_obs))
 
     m_bar, p_bar = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
-    for r_chk in (0.5 * float(ngc.rad_kpc[0]), 12.0, float(ngc.rad_kpc[-1]) + 15.0):
-        h = 1e-4 * r_chk
-        assert np.isclose((p_bar(r_chk + h) - p_bar(r_chk - h)) / (2.0 * h), G_ASTRO * m_bar(r_chk) / (r_chk**2), rtol=2e-3)
+    for r_chk in (0.5 * float(ngc.rad_kpc[0]), 1.0, 12.0, 25.0, float(ngc.rad_kpc[-1]) + 15.0):
+        h = 1e-5 * r_chk
+        assert np.isclose((p_bar(r_chk + h) - p_bar(r_chk - h)) / (2.0 * h), G_ASTRO * m_bar(r_chk) / (r_chk**2), rtol=1e-7)
 
     m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
     p_tot = lambda r: p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)

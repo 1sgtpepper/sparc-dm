@@ -27,17 +27,19 @@ def _dm_frac(galaxy: GalaxyData, fit: HaloFit) -> float:
 def baryon_mass_and_potential(
     galaxy: GalaxyData, upsilon_disk: float
 ) -> tuple[Callable[[float], float], Callable[[float], float]]:
-    """Construct spherical-equivalent baryonic ``M(r) = r*max(v_bar^2, 0)/G`` and central potential."""
+    """Construct spherical-equivalent baryonic ``M(r) = r*max(v_bar^2, 0)/G`` and exact matching central potential."""
     r_tab = np.concatenate(([0.0], galaxy.rad_kpc))
     m_tab = np.concatenate(([0.0], galaxy.rad_kpc * np.maximum(baryonic_velocity_sq(galaxy, upsilon_disk), 0.0) / G_ASTRO))
     r_min, r_max = float(galaxy.rad_kpc[0]), float(r_tab[-1])
     m_min, m_max = float(m_tab[1]), float(m_tab[-1])
     mass_fn = lambda r: m_max if r >= r_max else float(np.interp(r, r_tab, m_tab))
-    r_dense = np.linspace(r_min, r_max, 512)
-    g_r = G_ASTRO * np.interp(r_dense, r_tab, m_tab) / (r_dense**2)
-    seg = 0.5 * (g_r[:-1] + g_r[1:]) * np.diff(r_dense)
-    phi_dense = -G_ASTRO * m_max / r_max - np.concatenate((np.cumsum(seg[::-1])[::-1], [0.0]))
-    phi_min = float(phi_dense[0])
+    slopes = np.diff(m_tab[1:]) / np.diff(r_tab[1:])
+    intercepts = m_tab[1:-1] - slopes * r_tab[1:-1]
+    seg_dphi = G_ASTRO * (
+        intercepts * (1.0 / r_tab[1:-1] - 1.0 / r_tab[2:]) + slopes * np.log(r_tab[2:] / r_tab[1:-1])
+    )
+    phi_nodes = -G_ASTRO * m_max / r_max - np.concatenate((np.cumsum(seg_dphi[::-1])[::-1], [0.0]))
+    phi_min = float(phi_nodes[0])
     inner_slope = G_ASTRO * (m_min / r_min)
 
     def pot_fn(r: float) -> float:
@@ -46,9 +48,14 @@ def baryon_mass_and_potential(
             raise ValueError("Radius for baryonic potential must be finite and strictly positive")
         if rf >= r_max:
             return -G_ASTRO * m_max / rf
-        if rf < r_min:
+        if rf <= r_min:
             return phi_min - inner_slope * float(np.log(r_min / rf))
-        return float(np.interp(rf, r_dense, phi_dense))
+        idx = int(np.searchsorted(r_tab, rf, side="right")) - 2
+        ra = float(r_tab[idx + 1])
+        return float(
+            phi_nodes[idx]
+            + G_ASTRO * (intercepts[idx] * (1.0 / ra - 1.0 / rf) + slopes[idx] * np.log(rf / ra))
+        )
 
     return mass_fn, pot_fn
 
