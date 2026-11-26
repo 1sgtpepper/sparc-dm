@@ -41,6 +41,8 @@ class OptResult:
     fun: float
     iterations: int
     converged: bool
+    grad_norm: float | None = None
+    stop_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -186,13 +188,13 @@ def brent_minimize(f: Callable[[float], float], a: float, b: float, tol: float =
     x = w = v = lo + GOLDEN * (hi - lo)
     fx = fw = fv = float(f(x))
     if not np.isfinite(fx):
-        return OptResult(x, fx, 0, False)
+        return OptResult(x, fx, 0, False, None, "non_finite")
 
     step = prev = 0.0
     for k in range(1, n_max + 1):
         mid, tol1 = 0.5 * (lo + hi), tol * abs(x) + 1e-12
         if abs(x - mid) <= 2.0 * tol1 - 0.5 * (hi - lo):
-            return OptResult(x, fx, k - 1, True)
+            return OptResult(x, fx, k - 1, True, None, "tolerance")
         use_golden = True
         if abs(prev) > tol1:
             p = (x - w) ** 2 * (fx - fv) - (x - v) ** 2 * (fx - fw)
@@ -207,7 +209,7 @@ def brent_minimize(f: Callable[[float], float], a: float, b: float, tol: float =
         u = x + (step if abs(step) >= tol1 else float(np.copysign(tol1, step)))
         fu = float(f(u))
         if not np.isfinite(fu):
-            return OptResult(x, fx, k, False)
+            return OptResult(x, fx, k, False, None, "non_finite")
         if fu <= fx:
             lo, hi = (lo, x) if u < x else (x, hi)
             v, fv, w, fw, x, fx = w, fw, x, fx, u, fu
@@ -217,7 +219,7 @@ def brent_minimize(f: Callable[[float], float], a: float, b: float, tol: float =
                 v, fv, w, fw = w, fw, u, fu
             elif fu <= fv or v in (x, w):
                 v, fv = u, fu
-    return OptResult(x, fx, n_max, False)
+    return OptResult(x, fx, n_max, False, None, "max_iter")
 
 
 def _gradient(f: Callable[[np.ndarray], float], x: np.ndarray, bounds: BoundsPair) -> np.ndarray:
@@ -326,13 +328,14 @@ def conjugate_gradient(
     fx = float(loss_fn(x))
     g = project_box_vector(x, _gradient(loss_fn, x, b_pair), b_pair, flip=1.0)
     if not (np.isfinite(fx) and np.all(np.isfinite(g))):
-        return OptResult(x, fx, 0, False)
+        return OptResult(x, fx, 0, False, None, "non_finite")
 
     d, steepest, step_hint, stall_count = -g.copy(), True, 0.5, 0
     restart_period = max(x.size * 2, 6)
+    g_norm = float(np.linalg.norm(g))
     for k in range(1, n_max + 1):
-        if float(np.linalg.norm(g)) < tol:
-            return OptResult(x, fx, k - 1, True)
+        if g_norm < tol:
+            return OptResult(x, fx, k - 1, True, g_norm, "gradient")
         d = project_box_vector(x, d, b_pair, flip=-1.0)
         if float(g @ d) >= 0.0 or float(np.linalg.norm(d)) < 1e-30:
             d, steepest = -g.copy(), True
@@ -349,14 +352,18 @@ def conjugate_gradient(
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
             converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
-            return OptResult(x, fx, k - 1 if converged else k, converged)
+            return OptResult(
+                x, fx, k - 1 if converged else k, converged, g_norm, "machine_floor" if converged else "line_search_stalled"
+            )
         line = brent_minimize(phi, lo, hi, tol=1e-9, max_iter=80)
         if not np.isfinite(line.fun) or float(line.fun) >= fx:
             if not steepest:
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
             converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
-            return OptResult(x, fx, k - 1 if converged else k, converged)
+            return OptResult(
+                x, fx, k - 1 if converged else k, converged, g_norm, "machine_floor" if converged else "line_search_stalled"
+            )
         step_taken = float(line.x)
         step_hint = min(max_step, max(step_taken * 2.0, 1e-8))
         x_new = x + step_taken * d_hat
@@ -365,7 +372,7 @@ def conjugate_gradient(
         f_new = float(line.fun)
         g_new = project_box_vector(x_new, _gradient(loss_fn, x_new, b_pair), b_pair, flip=1.0)
         if not np.all(np.isfinite(g_new)):
-            return OptResult(x_new, f_new, k, False)
+            return OptResult(x_new, f_new, k, False, None, "non_finite")
         gg = float(g @ g)
         if active_set_changed(x, x_new, b_pair) or gg <= 1e-30 or (k % restart_period == 0):
             beta = 0.0
@@ -374,15 +381,16 @@ def conjugate_gradient(
         d = -g_new + beta * d
         dx_norm, df_abs = float(np.linalg.norm(x_new - x)), abs(fx - f_new)
         x, fx, g, steepest = x_new, f_new, g_new, (beta == 0.0)
-        if float(np.linalg.norm(g)) < tol:
-            return OptResult(x, fx, k, True)
+        g_norm = float(np.linalg.norm(g))
+        if g_norm < tol:
+            return OptResult(x, fx, k, True, g_norm, "gradient")
         if dx_norm < 1e-9 and df_abs <= 1e-12 * max(1.0, abs(fx)):
             stall_count += 1
             if stall_count >= 2 and _at_machine_floor(loss_fn, x, g, fx, tol, b_pair):
-                return OptResult(x, fx, k, True)
+                return OptResult(x, fx, k, True, g_norm, "machine_floor")
         else:
             stall_count = 0
-    return OptResult(x, fx, n_max, False)
+    return OptResult(x, fx, n_max, False, g_norm, "max_iter")
 
 
 def halo_model_velocity(

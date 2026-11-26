@@ -182,6 +182,16 @@ def test_live_survey_and_source_isolation(tmp_path: Path) -> None:
     data = json.loads(out_json.read_text(encoding="utf-8"))
     assert data["survey"]["n_galaxies"] == 3
     assert data["survey"]["non_converged_iso"] == 0 and data["survey"]["non_converged_nfw"] == 0 and data["survey"]["non_converged_baryons"] == 0
+    for row in data["galaxies"]:
+        assert row["baryons_iterations"] >= 0 and row["baryons_stop_reason"] == "tolerance"
+        for prefix in ("iso", "nfw"):
+            assert row[f"{prefix}_iterations"] >= 0
+            assert row[f"{prefix}_stop_reason"] in {"gradient", "machine_floor"}
+            assert isinstance(row[f"{prefix}_grad_norm"], float) and 0.0 <= row[f"{prefix}_grad_norm"] < 1e-3
+    assert data["survey"]["iso_machine_floor_stops"] == sum(r["iso_stop_reason"] == "machine_floor" for r in data["galaxies"])
+    assert data["survey"]["nfw_machine_floor_stops"] == sum(r["nfw_stop_reason"] == "machine_floor" for r in data["galaxies"])
+    assert data["survey"]["max_grad_norm_iso"] == max(r["iso_grad_norm"] for r in data["galaxies"])
+    assert data["survey"]["max_grad_norm_nfw"] == max(r["nfw_grad_norm"] for r in data["galaxies"])
     assert set(data["survey"]["iso_bounds_hits"]) == {"rho0", "rc", "upsilon_d"}
     assert set(data["survey"]["nfw_bounds_hits"]) == {"rhos", "rs", "upsilon_d"}
     assert data["survey"]["median_chi2_baryons"] > 10.0 * data["survey"]["median_chi2_iso"]

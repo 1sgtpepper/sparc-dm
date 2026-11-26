@@ -137,8 +137,16 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
             "chi2_iso": fi.chi2_red,
             "chi2_nfw": fn.chi2_red,
             "baryons_converged": bool(fb.opt.converged),
+            "baryons_iterations": int(fb.opt.iterations),
+            "baryons_stop_reason": fb.opt.stop_reason,
             "iso_converged": bool(fi.opt.converged),
+            "iso_iterations": int(fi.opt.iterations),
+            "iso_grad_norm": fi.opt.grad_norm,
+            "iso_stop_reason": fi.opt.stop_reason,
             "nfw_converged": bool(fn.opt.converged),
+            "nfw_iterations": int(fn.opt.iterations),
+            "nfw_grad_norm": fn.opt.grad_norm,
+            "nfw_stop_reason": fn.opt.stop_reason,
             "f_dm_outer_iso": _dm_frac(gal, fi),
             "f_dm_outer_nfw": _dm_frac(gal, fn),
             "iso_rho0": fi.rho0,
@@ -181,6 +189,8 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
 
     iso_wins = sum(1 for r in rows if r["chi2_iso"] < r["chi2_nfw"])
     nfw_wins = sum(1 for r in rows if r["chi2_nfw"] < r["chi2_iso"])
+    iso_gnorms = [r["iso_grad_norm"] for r in rows if r["iso_grad_norm"] is not None]
+    nfw_gnorms = [r["nfw_grad_norm"] for r in rows if r["nfw_grad_norm"] is not None]
     results: dict[str, object] = {
         "survey": {
             "n_galaxies": len(rows),
@@ -189,6 +199,12 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
             "non_converged_baryons": sum(1 for r in rows if not r["baryons_converged"]),
             "non_converged_iso": sum(1 for r in rows if not r["iso_converged"]),
             "non_converged_nfw": sum(1 for r in rows if not r["nfw_converged"]),
+            "iso_machine_floor_stops": sum(1 for r in rows if r["iso_stop_reason"] == "machine_floor"),
+            "nfw_machine_floor_stops": sum(1 for r in rows if r["nfw_stop_reason"] == "machine_floor"),
+            "median_grad_norm_iso": float(np.median(iso_gnorms)) if iso_gnorms else None,
+            "max_grad_norm_iso": float(np.max(iso_gnorms)) if iso_gnorms else None,
+            "median_grad_norm_nfw": float(np.median(nfw_gnorms)) if nfw_gnorms else None,
+            "max_grad_norm_nfw": float(np.max(nfw_gnorms)) if nfw_gnorms else None,
             "iso_bounds_hits": _count_hits("iso_bounds_hit", ISO_PARAM_LABELS),
             "nfw_bounds_hits": _count_hits("nfw_bounds_hit", NFW_PARAM_LABELS),
             "median_chi2_baryons": float(np.median([r["chi2_baryons"] for r in rows])),
