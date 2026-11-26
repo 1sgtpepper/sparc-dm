@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Sequence
 import json
 from pathlib import Path
-from typing import Callable, Sequence
 
 import numpy as np
 
@@ -33,7 +33,12 @@ def baryon_mass_and_potential(
     m_tab = np.concatenate(([0.0], galaxy.rad_kpc * np.maximum(baryonic_velocity_sq(galaxy, upsilon_disk), 0.0) / G_ASTRO))
     r_min, r_max = float(galaxy.rad_kpc[0]), float(r_tab[-1])
     m_min, m_max = float(m_tab[1]), float(m_tab[-1])
-    mass_fn = lambda r: m_max if r >= r_max else float(np.interp(r, r_tab, m_tab))
+
+    def mass_fn(r: float) -> float:
+        return m_max if r >= r_max else float(np.interp(r, r_tab, m_tab))
+
+    # Integrate dPhi/dr = G*M(r)/r^2 analytically on each piecewise-linear segment M(r) = a + b*r,
+    # anchored to the exterior Keplerian potential Phi(r_max) = -G*M_max/r_max.
     slopes = np.diff(m_tab[1:]) / np.diff(r_tab[1:])
     intercepts = m_tab[1:-1] - slopes * r_tab[1:-1]
     seg_dphi = G_ASTRO * (
@@ -82,7 +87,9 @@ def _deep_dive(gal: GalaxyData, fb: HaloFit, fi: HaloFit, fn: HaloFit) -> dict[s
             "newton_iters": None,
             "abs_diff_kpc": None,
         }
-    rho_fn = lambda r: iso_density(r, fi.rho0, fi.r_scale)
+    def rho_fn(r: np.ndarray) -> np.ndarray:
+        return iso_density(r, fi.rho0, fi.r_scale)
+
     m_exact = float(iso_mass_exact(gal.rad_kpc[-1], fi.rho0, fi.r_scale))
     m_simp = float(integrate_radial_mass_grid(rho_fn, gal.rad_kpc, "simpson", 32)[-1])
     m_gauss = float(integrate_radial_mass_grid(rho_fn, gal.rad_kpc, "gauss", 16)[-1])
@@ -125,7 +132,9 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
     out_file.parent.mkdir(parents=True, exist_ok=True)
     rows, fits = [], {}
     for name, gal in catalog.items():
-        fb, fi, fn = baryonic_only_fit(gal), fit_galaxy_halo(gal, "iso"), fit_galaxy_halo(gal, "nfw")
+        fb = baryonic_only_fit(gal)
+        fi = fit_galaxy_halo(gal, "iso")
+        fn = fit_galaxy_halo(gal, "nfw")
         fits[name] = (fb, fi, fn)
         iso_hits = hit_bounds_labels(fi.opt.x, (LOG_LO, LOG_HI), ISO_PARAM_LABELS)
         nfw_hits = hit_bounds_labels(fn.opt.x, (LOG_LO, LOG_HI), NFW_PARAM_LABELS)
@@ -161,12 +170,18 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
 
     orbit_test: dict[str, object] | None = None
     if "NGC3198" in catalog:
-        ngc, (_, ngc_iso, _) = catalog["NGC3198"], fits["NGC3198"]
+        ngc = catalog["NGC3198"]
+        _, ngc_iso, _ = fits["NGC3198"]
         r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
         v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
         m_bar, p_bar = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
-        m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
-        p_tot = lambda r: p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
+
+        def m_tot(r: float) -> float:
+            return m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
+
+        def p_tot(r: float) -> float:
+            return p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
+
         p_bar_r0 = p_bar(r0_kpc)
         orbit_test = {
             "galaxy": "NGC3198",
@@ -222,6 +237,7 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    """Parse CLI arguments, run the survey, and print a summary line."""
     parser = argparse.ArgumentParser(description="Run the SPARC dark-matter halo survey and NGC 3198 orbit test.")
     parser.add_argument("--data-dir", type=Path, default=None, help="Directory containing SPARC *_rotmod.dat files.")
     parser.add_argument("--output", type=Path, default=None, help="Output path for the JSON survey report.")

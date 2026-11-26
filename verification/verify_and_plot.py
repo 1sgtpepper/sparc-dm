@@ -81,7 +81,10 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
     v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
     m_bar, _ = baryon_mass_and_potential(ngc, ngc_iso["upsilon_disk"])
-    m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso["rho0"], ngc_iso["rc"]))
+
+    def m_tot(r: float) -> float:
+        return m_bar(r) + float(iso_mass_exact(r, ngc_iso["rho0"], ngc_iso["rc"]))
+
     tr_bar = rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps)
     tr_dm_rk4 = rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
     tr_dm_euler = euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)

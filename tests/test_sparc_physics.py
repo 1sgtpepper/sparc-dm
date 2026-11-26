@@ -154,8 +154,11 @@ def test_ngc3198_orbits_and_baryon_potential_consistency() -> None:
         h = 1e-5 * r_chk
         assert np.isclose((p_bar(r_chk + h) - p_bar(r_chk - h)) / (2.0 * h), G_ASTRO * m_bar(r_chk) / (r_chk**2), rtol=1e-7)
 
-    m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
-    p_tot = lambda r: p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
+    def m_tot(r: float) -> float:
+        return m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
+
+    def p_tot(r: float) -> float:
+        return p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
 
     diag_dm_rk4 = orbit_diagnostics(rk4_orbit(r0, v0, m_tot, dt, n_steps), p_tot)
     diag_dm_verlet = orbit_diagnostics(velocity_verlet_orbit(r0, v0, m_tot, dt, n_steps), p_tot)

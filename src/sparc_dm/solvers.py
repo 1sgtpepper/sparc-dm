@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 
@@ -28,6 +28,8 @@ LOG_HI = np.array([11.0, 3.0, np.log10(2.0)])
 
 @dataclass(frozen=True)
 class RootResult:
+    """Result of a 1D root-finding run, including the iterate trace."""
+
     root: float
     f_root: float
     iterations: int
@@ -37,6 +39,8 @@ class RootResult:
 
 @dataclass(frozen=True)
 class OptResult:
+    """Result of a 1D or multivariate minimization run."""
+
     x: float | np.ndarray
     fun: float
     iterations: int
@@ -330,7 +334,10 @@ def conjugate_gradient(
     if not (np.isfinite(fx) and np.all(np.isfinite(g))):
         return OptResult(x, fx, 0, False, None, "non_finite")
 
-    d, steepest, step_hint, stall_count = -g.copy(), True, 0.5, 0
+    d = -g.copy()
+    steepest = True
+    step_hint = 0.5
+    stall_count = 0
     restart_period = max(x.size * 2, 6)
     g_norm = float(np.linalg.norm(g))
     for k in range(1, n_max + 1):
@@ -379,8 +386,12 @@ def conjugate_gradient(
         else:
             beta = max(0.0, float(g_new @ (g_new - g)) / gg)
         d = -g_new + beta * d
-        dx_norm, df_abs = float(np.linalg.norm(x_new - x)), abs(fx - f_new)
-        x, fx, g, steepest = x_new, f_new, g_new, (beta == 0.0)
+        dx_norm = float(np.linalg.norm(x_new - x))
+        df_abs = abs(fx - f_new)
+        x = x_new
+        fx = f_new
+        g = g_new
+        steepest = beta == 0.0
         g_norm = float(np.linalg.norm(g))
         if g_norm < tol:
             return OptResult(x, fx, k, True, g_norm, "gradient")
@@ -415,10 +426,12 @@ def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray 
         return float(np.sum(((galaxy.v_obs - vm) * inv_err) ** 2) * inv_dof)
 
     shape = 1.0 - np.arctan(1.0) if model_kind == "iso" else np.log(2.0) - 0.5
-    v_ref, r_out = max(float(np.max(galaxy.v_obs)), 10.0), float(galaxy.rad_kpc[-1])
+    v_ref = max(float(np.max(galaxy.v_obs)), 10.0)
+    r_out = float(galaxy.rad_kpc[-1])
     if x0 is not None:
         starts = [np.asarray(x0, dtype=np.float64)]
     else:
+        # Span mid-scale, compact-core (ISO), and outer-scale basins to avoid local minima
         r_large = max(5.0 * r_out, 30.0)
         starts = [
             np.clip(np.log10([v_ref**2 / (4.0 * np.pi * G_ASTRO * r_s**2 * shape), r_s, 0.5]), LOG_LO, LOG_HI)
@@ -461,9 +474,14 @@ def find_crossover_radius(
     """Solve ``v_dm^2(r) = v_bar^2(r)`` via bisection and safeguarded Newton at shared ``tol`` within ``galaxy.rad_kpc``."""
     if model_kind not in HALO_VELOCITY:
         raise ValueError(f"Unsupported model_kind: {model_kind!r}")
-    r_tab, vb2_tab = galaxy.rad_kpc, baryonic_velocity_sq(galaxy, upsilon_disk)
-    r_min, r_max, v_halo = float(r_tab[0]), float(r_tab[-1]), HALO_VELOCITY[model_kind]
+    r_tab = galaxy.rad_kpc
+    vb2_tab = baryonic_velocity_sq(galaxy, upsilon_disk)
+    r_min = float(r_tab[0])
+    r_max = float(r_tab[-1])
+    v_halo = HALO_VELOCITY[model_kind]
     vals = v_halo(r_tab, rho0, rc) ** 2 - vb2_tab
+
+    # Scan for the outermost upward crossing where dark-matter support overtakes baryons
     up_idx: int | None = None
     last_sign = 0
     for i, val in enumerate(vals):
@@ -477,9 +495,12 @@ def find_crossover_radius(
     if up_idx is None:
         raise ValueError(f"{galaxy.name}: no baryon->dark-matter crossover in observed range [{r_min}, {r_max}] kpc")
     lo, hi = float(r_tab[up_idx]), float(r_tab[up_idx + 1])
-    f = lambda r: float(v_halo(r, rho0, rc) ** 2 - np.interp(r, r_tab, vb2_tab))
+
+    def f(r: float) -> float:
+        return float(v_halo(r, rho0, rc) ** 2 - np.interp(r, r_tab, vb2_tab))
 
     def df(r: float) -> float:
+        # Clamp finite-difference stencil inside [lo, hi] to avoid crossing the piecewise-linear v_bar^2 kinks
         h = min(max(1e-5 * r, 1e-6), 0.25 * (hi - lo))
         r_lo, r_hi = max(lo, r - h), min(hi, r + h)
         return (f(r_hi) - f(r_lo)) / (r_hi - r_lo)

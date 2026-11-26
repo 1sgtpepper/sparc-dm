@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -61,7 +61,9 @@ def rk4_orbit(r0_kpc: float, v0_kms: float, mass_fn: MassFunc, dt_gyr: float, n_
 def velocity_verlet_orbit(r0_kpc: float, v0_kms: float, mass_fn: MassFunc, dt_gyr: float, n_steps: int) -> np.ndarray:
     """Symplectic Velocity Verlet (kick-drift-kick) 2D orbit integration."""
     traj, steps = _init_traj(r0_kpc, v0_kms, dt_gyr, n_steps)
-    c, pos, vel = KPC_PER_GYR_PER_KMS, traj[0, :2].copy(), traj[0, 2:].copy()
+    c = KPC_PER_GYR_PER_KMS
+    pos = traj[0, :2].copy()
+    vel = traj[0, 2:].copy()
     acc = accel(pos, mass_fn) * c
     for i in range(steps):
         vel_half = vel + 0.5 * dt_gyr * acc

@@ -157,8 +157,11 @@ def test_trapezoid_simpson_orders_and_radial_mass_grid() -> None:
 
 def test_bisection_linear_vs_newton_quadratic_and_guards() -> None:
     """Verify increasing/decreasing bisection vs quadratic Newton contraction and failure boundaries."""
-    f = lambda x: math.exp(x) - 3.0 * x - 2.0
-    df = lambda x: math.exp(x) - 3.0
+    def f(x: float) -> float:
+        return math.exp(x) - 3.0 * x - 2.0
+
+    def df(x: float) -> float:
+        return math.exp(x) - 3.0
 
     bis = bisection(f, 1.0, 3.0, tol=1e-10)
     bis_dec = bisection(lambda x: -f(x), 1.0, 3.0, tol=1e-10)
@@ -233,7 +236,9 @@ def test_brent_cg_and_independent_halo_recovery() -> None:
     with pytest.raises(ValueError):
         brent_minimize(lambda x: x * x, 2.0, 2.0)
 
-    quad = lambda v: float(3.0 * (v[0] - 1.7) ** 2 + 2.0 * (v[0] - 1.7) * (v[1] + 0.8) + 7.0 * (v[1] + 0.8) ** 2)
+    def quad(v: np.ndarray) -> float:
+        return float(3.0 * (v[0] - 1.7) ** 2 + 2.0 * (v[0] - 1.7) * (v[1] + 0.8) + 7.0 * (v[1] + 0.8) ** 2)
+
     q_res = conjugate_gradient(quad, np.array([-4.0, 5.0]), tol=1e-7, max_iter=40)
     assert q_res.converged and q_res.iterations <= 4 and np.allclose(q_res.x, [1.7, -0.8], atol=1e-5)
 
@@ -248,34 +253,46 @@ def test_brent_cg_and_independent_halo_recovery() -> None:
         assert big_x.converged and abs(float(big_x.x[0]) - 1e13) < 1e-3
 
     # Ill-conditioned convex valley (axis-aligned and 45-deg rotated) must not falsely converge far from minimum
-    ill = lambda v: float(1e-5 * (v[0] - 10.0) ** 2 + 1e6 * (v[1] - 1.0) ** 2)
+    def ill(v: np.ndarray) -> float:
+        return float(1e-5 * (v[0] - 10.0) ** 2 + 1e6 * (v[1] - 1.0) ** 2)
+
     ill_res = conjugate_gradient(ill, np.array([0.0, 1.0 + 1e-10]), tol=1e-8, max_iter=100)
     assert ill_res.converged and np.allclose(ill_res.x, [10.0, 1.0], atol=1e-4)
 
     s2 = math.sqrt(2.0)
-    rot_ill = lambda v: float(1.0 + 1e-5 * ((v[0] + v[1]) / s2 - 10.0) ** 2 + 1e6 * ((v[0] - v[1]) / s2 - 1.0) ** 2)
+
+    def rot_ill(v: np.ndarray) -> float:
+        return float(1.0 + 1e-5 * ((v[0] + v[1]) / s2 - 10.0) ** 2 + 1e6 * ((v[0] - v[1]) / s2 - 1.0) ** 2)
+
     x_rot0 = np.array([(9.5 + 1.0 + 1e-11) / s2, (9.5 - 1.0 - 1e-11) / s2])
     x_rot_star = np.array([11.0 / s2, 9.0 / s2])
     rot_res = conjugate_gradient(rot_ill, x_rot0, tol=1e-6, max_iter=100)
     assert (not rot_res.converged) or np.allclose(rot_res.x, x_rot_star, atol=1e-3)
 
-    rosen = lambda v: float((1.0 - v[0]) ** 2 + 100.0 * (v[1] - v[0] ** 2) ** 2)
+    def rosen(v: np.ndarray) -> float:
+        return float((1.0 - v[0]) ** 2 + 100.0 * (v[1] - v[0] ** 2) ** 2)
+
     r_res = conjugate_gradient(rosen, np.array([-1.2, 1.0]), tol=1e-6, max_iter=200)
     assert r_res.converged and np.allclose(r_res.x, [1.0, 1.0], atol=1e-3)
 
     # Unbounded linear+quadratic objectives, saddles, non-finite ray cliffs, and non-smooth walls must not converge
-    unb = lambda v: float(1e-4 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
-    assert not conjugate_gradient(unb, np.array([5.0, 1.0 + 1e-14]), tol=1e-8, max_iter=20).converged
-    unb_small = lambda v: float(1e5 + 1e-5 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
-    assert not conjugate_gradient(unb_small, np.array([5.0, 1.0 + 1e-14]), tol=1e-6, max_iter=20).converged
-    unb_tiny = lambda v: float(1.0 + 1e-10 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
-    assert not conjugate_gradient(unb_tiny, np.array([5.0, 1.0 + 1e-14]), tol=1e-12, max_iter=20).converged
+    for slope, offset, tol_val in ((1e-4, 0.0, 1e-8), (1e-5, 1e5, 1e-6), (1e-10, 1.0, 1e-12)):
+        res_unb = conjugate_gradient(
+            lambda v, s=slope, c=offset: float(c + s * v[0] + 1e10 * (v[1] - 1.0) ** 2),
+            np.array([5.0, 1.0 + 1e-14]),
+            tol=tol_val,
+            max_iter=20,
+        )
+        assert not res_unb.converged
     cliff = conjugate_gradient(lambda v: float("nan") if v[0] < 0.0 else float((v[0] + 1.0) ** 2), [0.5], max_iter=10)
     assert not cliff.converged and np.all(np.isfinite(cliff.x)) and cliff.fun < 1.5
     nan_res = conjugate_gradient(lambda v: float("nan") if v[0] < 0.999 else float(v[0] ** 2), [1.0, 0.0], max_iter=5)
     assert not nan_res.converged and np.all(np.isfinite(nan_res.x)) and np.isfinite(nan_res.fun)
-    wall = lambda v: float((v[0] - 10.0) ** 2 + 1e8 * max(0.0, -v[1]) ** 2 + 1e4 * max(0.0, v[1]))
-    assert not conjugate_gradient(wall, [0.0, 0.0], max_iter=5).converged
+    assert not conjugate_gradient(
+        lambda v: float((v[0] - 10.0) ** 2 + 1e8 * max(0.0, -v[1]) ** 2 + 1e4 * max(0.0, v[1])),
+        [0.0, 0.0],
+        max_iter=5,
+    ).converged
 
     # Recover ISO and NFW parameters from quadrature-synthesized rotation curves
     ngc = load_galaxy(DATA_DIR / "NGC3198_rotmod.dat")
@@ -306,8 +323,11 @@ def test_kepler_orbit_convergence_orders_and_physics_controls() -> None:
     m_pt, r0 = 1.0e11, 10.0
     v_circ = math.sqrt(G_ASTRO * m_pt / r0)
     t_orb = 2.0 * math.pi * r0 / (v_circ * KPC_PER_GYR_PER_KMS)
-    mass_fn = lambda _r: m_pt
-    pot_fn = lambda r: -G_ASTRO * m_pt / r
+    def mass_fn(_r: float) -> float:
+        return m_pt
+
+    def pot_fn(r: float) -> float:
+        return -G_ASTRO * m_pt / r
 
     step_counts = (80, 160, 320, 640)
     dts = [t_orb / n for n in step_counts]

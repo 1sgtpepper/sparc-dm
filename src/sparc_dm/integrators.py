@@ -27,6 +27,7 @@ def gauss_legendre(n: int, a: float = -1.0, b: float = 1.0) -> tuple[np.ndarray,
     if not (np.isfinite(a) and np.isfinite(b)):
         raise ValueError("Integration bounds a and b must be finite")
 
+    # Exploit symmetry of P_n(x): solve only the positive half-roots via Newton's method
     m = (n_int + 1) // 2
     x = np.cos(np.pi * (np.arange(1, m + 1, dtype=np.float64) - 0.25) / (n_int + 0.5))
 
