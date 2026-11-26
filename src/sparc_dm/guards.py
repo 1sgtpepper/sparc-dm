@@ -31,9 +31,15 @@ def check_galaxy_table(table: np.ndarray, distance_mpc: float | None, filename: 
 def check_1d_grid(
     y: np.ndarray, min_size: int, h: float, label: str, require_even_intervals: bool = False
 ) -> np.ndarray:
-    """Validate uniform-grid samples and finite spacing ``h`` for composite quadrature."""
+    """Validate finite uniform-grid samples and finite spacing ``h`` for composite quadrature."""
     arr = np.asarray(y, dtype=np.float64)
-    if arr.ndim != 1 or arr.size < min_size or not np.isfinite(h) or (require_even_intervals and (arr.size - 1) % 2 != 0):
+    if (
+        arr.ndim != 1
+        or arr.size < min_size
+        or not np.all(np.isfinite(arr))
+        or not np.isfinite(h)
+        or (require_even_intervals and (arr.size - 1) % 2 != 0)
+    ):
         raise ValueError(f"Invalid inputs to {label}")
     return arr
 

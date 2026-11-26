@@ -12,7 +12,7 @@ import shutil
 import numpy as np
 import pytest
 
-from sparc_dm.cli import baryon_mass_and_potential, run_survey
+from sparc_dm.cli import baryon_mass_and_potential, main as cli_main, run_survey
 from sparc_dm.data import GalaxyData, load_galaxy, load_sparc_catalog
 from sparc_dm.models import G_ASTRO, baryonic_velocity_sq, chi2_reduced, iso_mass_exact, iso_velocity, nfw_velocity, total_velocity
 from sparc_dm.orbits import euler_orbit, iso_potential, orbit_diagnostics, rk4_orbit, velocity_verlet_orbit
@@ -34,11 +34,15 @@ def test_sparc_catalog_bulge_gas_and_parser_boundaries(tmp_path: Path) -> None:
     assert np.isclose(ngc.distance_mpc, 13.8, rtol=1e-6) and np.any(neg_mask)
     assert np.allclose(baryonic_velocity_sq(ngc, upsilon_disk=0.0)[neg_mask], -(ngc.v_gas[neg_mask] ** 2))
 
-    # Real bulge galaxy NGC2841 includes nonzero UPSILON_BUL * v_bul^2
+    # Real bulge galaxy NGC2841 includes nonzero UPSILON_BUL * v_bul^2; negative upsilon_disk rejected
     bul_gal = catalog["NGC2841"]
     assert np.any(bul_gal.v_bul > 0.0)
     diff_bul = baryonic_velocity_sq(bul_gal, 0.5) - baryonic_velocity_sq(replace(bul_gal, v_bul=np.zeros_like(bul_gal.v_bul)), 0.5)
     assert np.allclose(diff_bul, 0.7 * (bul_gal.v_bul**2))
+    assert np.allclose(baryonic_velocity_sq(replace(bul_gal, v_disk=-bul_gal.v_disk, v_gas=np.zeros_like(bul_gal.v_gas), v_bul=np.zeros_like(bul_gal.v_bul)), 0.5), -0.5 * (bul_gal.v_disk**2))
+    for bad_ups in (-0.1, float("nan")):
+        with pytest.raises(ValueError):
+            baryonic_velocity_sq(ngc, bad_ups)
 
     bad_files = {
         "nodist_rotmod.dat": "1.0 50.0 2.0 10.0 40.0 0.0\n",
@@ -67,6 +71,7 @@ def test_baryonic_failure_dark_halo_fits_and_nfw_trap() -> None:
 
     ngc_bar, ngc_iso, ngc_nfw = baryonic_only_fit(ngc), fit_galaxy_halo(ngc, "iso"), fit_galaxy_halo(ngc, "nfw")
     assert ngc_bar.opt.converged and ngc_iso.opt.converged and ngc_nfw.opt.converged
+    assert np.isclose(ngc_bar.opt.fun, ngc_bar.chi2_red, rtol=1e-12)
     for fixed_u in (0.5, 2.0):
         assert ngc_bar.chi2_red < chi2_reduced(ngc.v_obs, ngc.v_err, total_velocity(baryonic_velocity_sq(ngc, fixed_u), 0.0), 1)
     assert ngc_bar.chi2_red > 100.0 and ngc_iso.chi2_red < 3.0 and ngc_nfw.chi2_red < 3.0
@@ -106,11 +111,15 @@ def test_crossover_ngc3198_ddo154_and_safeguarded_newton() -> None:
         vb2_at = float(np.interp(bis.root, ngc.rad_kpc, baryonic_velocity_sq(ngc, fit.upsilon_disk)))
         assert abs(float(v_fn(bis.root, fit.rho0, fit.r_scale) ** 2) - vb2_at) < 1e-3
 
-    # Bracket-safeguarded Newton prevents boundary escape (F561-1) and false roots (UGC11820)
+    # Bracket-safeguarded Newton prevents boundary escape (F561-1), false roots (UGC11820), and ULP ejection (NGC2683)
     b1, n1 = find_crossover_radius(load_galaxy(DATA_DIR / "F561-1_rotmod.dat"), 1e7, 2.0, 0.5, "iso")
-    assert b1.converged and n1.converged and abs(b1.root - n1.root) < 1e-6
+    assert b1.converged and n1.converged and abs(b1.root - n1.root) < 1e-8
     b2, n2 = find_crossover_radius(load_galaxy(DATA_DIR / "UGC11820_rotmod.dat"), 1e6, 10.0, 0.5, "nfw")
-    assert b2.converged and n2.converged and abs(b2.root - n2.root) < 1e-6
+    assert b2.converged and n2.converged and abs(b2.root - n2.root) < 1e-8
+    ngc2683 = load_galaxy(DATA_DIR / "NGC2683_rotmod.dat")
+    fit_2683 = fit_galaxy_halo(ngc2683, "iso")
+    b3, n3 = find_crossover_radius(ngc2683, fit_2683.rho0, fit_2683.r_scale, fit_2683.upsilon_disk, "iso")
+    assert b3.converged and n3.converged and n3.iterations <= 6 and n3.iterations < b3.iterations and abs(n3.f_root) < 1e-9
 
     ddo = load_galaxy(DATA_DIR / "DDO154_rotmod.dat")
     ddo_iso = fit_galaxy_halo(ddo, "iso")
@@ -175,6 +184,13 @@ def test_live_survey_and_source_isolation(tmp_path: Path) -> None:
     assert 5.0 < data["deep_dives"]["NGC3198"]["crossover"]["bisection_kpc"] < 9.0
     assert data["deep_dives"]["DDO154"]["crossover"]["dm_dominated_everywhere"] is True
     assert data["orbit_test"]["baryons_only_rk4"]["r_final_ratio"] > 5.0
+    assert 0.4 < data["orbit_test"]["upsilon_disk"] < 0.7
+    assert data["orbit_test"]["baryons_only_specific_energy"] > 0.0
+    assert data["orbit_test"]["baryons_only_v_esc_kms"] < data["orbit_test"]["v0_kms"]
+
+    with pytest.raises(SystemExit) as exc:
+        cli_main(["--help"])
+    assert exc.value.code == 0
 
     banned = {"scipy", "matplotlib", "pandas"}
     for py_file in sorted(SRC_DIR.glob("*.py")):

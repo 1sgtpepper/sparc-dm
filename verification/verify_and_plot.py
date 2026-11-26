@@ -39,11 +39,12 @@ def _quadrature_and_ode_convergence() -> dict[str, object]:
     v_circ = math.sqrt(G_ASTRO * m_pt / r0)
     t_orb = 2.0 * math.pi * r0 / (v_circ * KPC_PER_GYR_PER_KMS)
     n_steps = np.array([160, 320, 640, 1280], dtype=int)
+    n_steps_euler = np.array([640, 1280, 2560, 5120], dtype=int)
     h_norm_o = n_steps[0] / n_steps.astype(np.float64)
     err_euler, err_verlet, err_rk4 = [], [], []
-    for n in n_steps:
+    for n, n_e in zip(n_steps, n_steps_euler):
         dt = t_orb / int(n)
-        tr_e = euler_orbit(r0, v_circ, lambda _r: m_pt, dt, int(n))
+        tr_e = euler_orbit(r0, v_circ, lambda _r: m_pt, t_orb / int(n_e), int(n_e))
         tr_v = velocity_verlet_orbit(r0, v_circ, lambda _r: m_pt, dt, int(n))
         tr_r = rk4_orbit(r0, v_circ, lambda _r: m_pt, dt, int(n))
         err_euler.append(float(np.hypot(tr_e[-1, 0] - r0, tr_e[-1, 1])) / r0)
@@ -60,7 +61,7 @@ def _quadrature_and_ode_convergence() -> dict[str, object]:
         "err_euler": np.array(err_euler),
         "err_verlet": np.array(err_verlet),
         "err_rk4": np.array(err_rk4),
-        "slope_euler": float(np.polyfit(np.log(h_norm_o[-3:]), np.log(err_euler[-3:]), 1)[0]),
+        "slope_euler": float(np.polyfit(np.log(h_norm_o), np.log(err_euler), 1)[0]),
         "slope_verlet": float(np.polyfit(np.log(h_norm_o), np.log(err_verlet), 1)[0]),
         "slope_rk4": float(np.polyfit(np.log(h_norm_o), np.log(err_rk4), 1)[0]),
     }
@@ -91,17 +92,17 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
 
     plt.rcParams.update(
         {
-            "font.size": 9.5,
-            "axes.titlesize": 10.5,
+            "font.size": 10.5,
+            "axes.titlesize": 11.5,
             "axes.titleweight": "bold",
-            "axes.labelsize": 9.5,
-            "legend.fontsize": 8.0,
-            "xtick.labelsize": 8.5,
-            "ytick.labelsize": 8.5,
+            "axes.labelsize": 10.5,
+            "legend.fontsize": 8.4,
+            "xtick.labelsize": 9.2,
+            "ytick.labelsize": 9.2,
         }
     )
 
-    fig, axes = plt.subplots(2, 2, figsize=(13.5, 9.8), dpi=300)
+    fig, axes = plt.subplots(2, 2, figsize=(12.2, 9.2), dpi=300)
 
     # --- Panel A: NGC 3198 Rotation Curve (Baryons-only vs ISO vs NFW + Crossover) ---
     ax = axes[0, 0]
@@ -115,8 +116,8 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.plot(r, v_bar_only, "--", color="#c0392b", lw=1.7, label=f"Baryons-only ($\\chi^2_\\nu={ngc_bar.chi2_red:.1f}$)")
     ax.plot(r, v_tot_iso, "-", color="#1f5a8a", lw=2.2, label=f"Baryons + ISO Core ($\\chi^2_\\nu={ngc_iso.chi2_red:.2f}$)")
     ax.plot(r, v_tot_nfw, "-.", color="#d97706", lw=1.7, label=f"Baryons + NFW Cusp ($\\chi^2_\\nu={ngc_nfw.chi2_red:.2f}$)")
-    ax.plot(r, v_bar_iso, ":", color="#6b7280", lw=1.3, label="ISO fit: Baryons component")
-    ax.plot(r, v_dm_iso, ":", color="#0f766e", lw=1.5, label="ISO fit: Dark Halo component")
+    ax.plot(r, v_bar_iso, ":", color="#6b7280", lw=1.5, label=f"ISO fit: Baryons ($\\Upsilon_d={ngc_iso.upsilon_disk:.2f}$)")
+    ax.plot(r, v_dm_iso, linestyle=(0, (3, 1.5, 1, 1.5)), color="#0f766e", lw=1.6, label="ISO fit: Dark Halo")
 
     r_cross = bis.root
     v_cross = float(iso_velocity(r_cross, ngc_iso.rho0, ngc_iso.r_scale))
@@ -125,8 +126,8 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.annotate(
         f"Crossover $r_\\times = {r_cross:.2f}$ kpc\n(Bisect {bis.iterations} vs Newton {newt.iterations} it)",
         xy=(r_cross, v_cross),
-        xytext=(r_cross + 5.0, v_cross - 38.0),
-        fontsize=8.0,
+        xytext=(r_cross + 4.0, v_cross + 62.0),
+        fontsize=8.3,
         bbox={"boxstyle": "round,pad=0.3", "fc": "#f0fdfa", "ec": "#0f766e", "alpha": 0.92},
         arrowprops={"arrowstyle": "->", "color": "#0f766e", "lw": 1.1},
     )
@@ -153,20 +154,22 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_ylim(1.0e-2, 1.5e2)
 
     s = survey_data["survey"]
+    n_non_conv = int(s["non_converged_baryons"]) + int(s["non_converged_iso"]) + int(s["non_converged_nfw"])
+    conv_tag = "all converged" if n_non_conv == 0 else f"{n_non_conv} non-converged"
     box_text = (
-        f"SPARC Survey ($N = {s['n_galaxies']}$, all converged)\n"
+        f"SPARC Survey ($N = {s['n_galaxies']}$, {conv_tag})\n"
         f"ISO Core wins: {s['iso_wins']}/{s['n_galaxies']} ({100.0 * s['iso_wins'] / s['n_galaxies']:.1f}%)\n"
         f"Med $\\chi^2_\\nu$: Bar {s['median_chi2_baryons']:.1f} | ISO {s['median_chi2_iso']:.2f} | NFW {s['median_chi2_nfw']:.2f}\n"
         f"Median outer $f_{{\\mathrm{{DM}}}} = {s['median_f_dm_outer_iso']:.2f}$"
     )
     ax.text(
-        0.04, 0.96, box_text, transform=ax.transAxes, va="top", ha="left", fontsize=8.0, zorder=7,
+        0.04, 0.96, box_text, transform=ax.transAxes, va="top", ha="left", fontsize=8.3, zorder=7,
         bbox={"boxstyle": "round,pad=0.35", "fc": "#ffffff", "ec": "#9ca3af", "alpha": 0.94},
     )
-    ax.text(0.04, 0.72, "Above diagonal:\nISO Core fits better", transform=ax.transAxes, ha="left", va="top", fontsize=8.0, color="#1f5a8a", style="italic", zorder=7)
-    ax.text(0.96, 0.05, "Below diagonal: NFW Cusp fits better", transform=ax.transAxes, ha="right", va="bottom", fontsize=8.0, color="#b45309", style="italic", zorder=7)
+    ax.text(0.04, 0.71, "Above diagonal:\nISO Core fits better", transform=ax.transAxes, ha="left", va="top", fontsize=8.3, color="#1f5a8a", style="italic", zorder=7)
+    ax.text(0.96, 0.05, "Below diagonal: NFW Cusp fits better", transform=ax.transAxes, ha="right", va="bottom", fontsize=8.3, color="#b45309", style="italic", zorder=7)
     cbar = fig.colorbar(sc, ax=ax, pad=0.02, fraction=0.046)
-    cbar.set_label("Outer dark-matter fraction $f_{\\mathrm{DM}}(R_{\\max})$", fontsize=8.5)
+    cbar.set_label("ISO outer dark-matter fraction $f_{\\mathrm{DM}}(R_{\\max})$", fontsize=9.0)
     ax.set_xlabel("ISO Core reduced $\\chi^2_\\nu$")
     ax.set_ylabel("NFW Cusp reduced $\\chi^2_\\nu$")
     ax.set_title("B. SPARC Survey: Core vs Cusp $\\chi^2_\\nu$ & Dark Fraction")
@@ -188,24 +191,24 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_xticks([0.1, 0.2, 0.5, 1.0])
     ax.set_xticklabels(["0.1", "0.2", "0.5", "1.0"])
     ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax.legend(loc="lower right", frameon=True, framealpha=0.94, fontsize=7.6)
+    ax.legend(loc="lower right", frameon=True, framealpha=0.94, fontsize=8.0)
     ax.grid(True, which="both", alpha=0.25)
 
-    # --- Panel D: NGC 3198 2D Star Orbit at r0 = 25 kpc (Bound with DM vs Escaping without DM) ---
+    # --- Panel D: NGC 3198 2D Star Orbit at r0 = 25 kpc (Bound with DM vs Halo Removed) ---
     ax = axes[1, 1]
     theta = np.linspace(0.0, 2.0 * np.pi, 200)
-    ax.plot(r0_kpc * np.cos(theta), r0_kpc * np.sin(theta), ":", color="#9ca3af", lw=1.0, label=f"Initial circle $r_0 = {r0_kpc:.0f}$ kpc")
+    ax.plot(r0_kpc * np.cos(theta), r0_kpc * np.sin(theta), ":", color="#9ca3af", lw=1.1, label=f"Initial circle $r_0 = {r0_kpc:.0f}$ kpc")
     ax.plot(tr_dm_rk4[:, 0], tr_dm_rk4[:, 1], "-", color="#1f5a8a", lw=2.2, label="Baryons + ISO Halo (RK4, bound)")
-    ax.plot(tr_dm_euler[:, 0], tr_dm_euler[:, 1], "--", color="#d97706", lw=1.4, label="Baryons + ISO Halo (Euler drift)")
-    ax.plot(tr_bar[:, 0], tr_bar[:, 1], "-", color="#c0392b", lw=2.0, label="Baryons-Only (RK4, escapes)")
+    ax.plot(tr_dm_euler[:, 0], tr_dm_euler[:, 1], "--", color="#d97706", lw=1.5, label="Baryons + ISO Halo (Euler drift)")
+    ax.plot(tr_bar[:, 0], tr_bar[:, 1], "-.", color="#c0392b", lw=2.1, label=f"Halo removed ($\\Upsilon_d={ngc_iso.upsilon_disk:.2f}$, RK4, escapes)")
     ax.scatter([0.0], [0.0], s=55, marker="*", color="#111827", zorder=6, label="NGC 3198 center")
     ax.scatter([r0_kpc], [0.0], s=42, color="#0f766e", edgecolor="white", linewidth=0.8, zorder=7)
 
     ax.annotate(
         f"Start $({r0_kpc:.0f}, 0)$ kpc\n$v_0 = {v0_kms:.1f}$ km/s",
         xy=(r0_kpc, 0.0),
-        xytext=(34.0, -34.0),
-        fontsize=8.0,
+        xytext=(34.0, 22.0),
+        fontsize=8.3,
         bbox={"boxstyle": "round,pad=0.28", "fc": "#f0fdfa", "ec": "#0f766e", "alpha": 0.92},
         arrowprops={"arrowstyle": "->", "color": "#0f766e", "lw": 1.1},
     )
@@ -215,8 +218,8 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.annotate(
         f"Escapes ($r_{{2\\,\\mathrm{{Gyr}}}}/r_0 = {r_bar[-1] / r0_kpc:.1f}$)",
         xy=(tr_bar[esc_idx, 0], tr_bar[esc_idx, 1]),
-        xytext=(-68.0, 58.0),
-        fontsize=8.0,
+        xytext=(-70.0, 58.0),
+        fontsize=8.3,
         bbox={"boxstyle": "round,pad=0.28", "fc": "#fef2f2", "ec": "#c0392b", "alpha": 0.92},
         arrowprops={"arrowstyle": "->", "color": "#c0392b", "lw": 1.1},
     )
@@ -227,7 +230,7 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.set_xlabel("$x$ (kpc)")
     ax.set_ylabel("$y$ (kpc)")
     ax.set_title(f"D. NGC 3198 Central-Force Orbit ($2.0$ Gyr, $r_0 = {r0_kpc:.0f}$ kpc)")
-    ax.legend(loc="lower left", frameon=True, framealpha=0.92, fontsize=7.6)
+    ax.legend(loc="lower left", frameon=True, framealpha=0.92, fontsize=8.0)
     ax.grid(alpha=0.25)
 
     fig.tight_layout(pad=1.6)

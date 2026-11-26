@@ -62,8 +62,14 @@ def nfw_velocity(r: np.ndarray | float, rhos: float, rs: float) -> np.ndarray:
 
 
 def baryonic_velocity_sq(galaxy: GalaxyData, upsilon_disk: float = 0.5) -> np.ndarray:
-    """Signed baryonic circular velocity squared preserving negative inner gas terms."""
-    return galaxy.v_gas * np.abs(galaxy.v_gas) + upsilon_disk * galaxy.v_disk**2 + UPSILON_BUL * galaxy.v_bul**2
+    """Signed baryonic circular velocity squared preserving negative component terms."""
+    if not np.isfinite(upsilon_disk) or upsilon_disk < 0.0:
+        raise ValueError(f"upsilon_disk must be finite and >= 0, got {upsilon_disk!r}")
+    return (
+        galaxy.v_gas * np.abs(galaxy.v_gas)
+        + upsilon_disk * galaxy.v_disk * np.abs(galaxy.v_disk)
+        + UPSILON_BUL * galaxy.v_bul * np.abs(galaxy.v_bul)
+    )
 
 
 def total_velocity(v_bar_sq: np.ndarray | float, v_dm: np.ndarray | float) -> np.ndarray:

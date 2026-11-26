@@ -144,7 +144,9 @@ def test_trapezoid_simpson_orders_and_radial_mass_grid() -> None:
     )
     for bad_call in (
         lambda: simpson_integrate(np.array([1.0, 2.0, 3.0, 4.0]), 0.5),
+        lambda: simpson_integrate(np.array([1.0, float("nan"), 3.0]), 0.5),
         lambda: trapezoid_integrate(np.array([1.0]), 0.5),
+        lambda: trapezoid_integrate(np.array([1.0, float("inf")]), 0.5),
         lambda: integrate_radial_mass_grid(lambda r: np.ones_like(r), np.array([-1.0, 1.0])),
         lambda: integrate_radial_mass_grid(lambda r: np.ones_like(r), np.array([1.0]), method="simpson", n_nodes=3),
     ):
@@ -169,11 +171,19 @@ def test_bisection_linear_vs_newton_quadratic_and_guards() -> None:
     errs = [abs(x - newt.root) for x in newt.trace if abs(x - newt.root) > 1e-14]
     assert len(errs) >= 3 and errs[-1] < 2.0 * (errs[-2] ** 2)
 
-    # Exact endpoints & non-convergence guards
+    # Bracketed Newton must not eject float64-converged roots back into bisection
+    nr_ulp = newton_raphson(lambda x: 275.0 - x * x, lambda x: -2.0 * x, x0=15.0, tol=1e-10, bounds=(10.0, 20.0))
+    assert nr_ulp.converged and nr_ulp.iterations <= 6 and abs(nr_ulp.f_root) < 1e-12
+
+    # Exact endpoints & non-convergence guards (including steep rootless functions)
     assert bisection(lambda x: x - 2.0, 2.0, 5.0).iterations == 0
     assert newton_raphson(lambda x: x * (2.0 - x), lambda x: 2.0 - 2.0 * x, x0=2.5, bounds=(2.0, 3.0)).root == 2.0
     assert newton_raphson(lambda x: x * x, lambda x: 2.0 * x, x0=0.0).converged
     assert not newton_raphson(lambda x: x * x - 1.0, lambda x: 2.0 * x, x0=0.0).converged
+    assert not newton_raphson(
+        lambda x: math.atan(1e12 * x) + 2.0, lambda x: 1e12 / (1.0 + (1e12 * x) ** 2), x0=0.0, tol=1e-10
+    ).converged
+    assert not newton_raphson(lambda x: 1.0 + 1.0 / (x * x), lambda x: -2.0 / (x**3), x0=1e-10, tol=1e-10).converged
     assert not bisection(lambda x: x - 0.3, 0.0, 1.0, tol=1e-12, max_iter=2).converged
 
     for bad_call in (
@@ -181,6 +191,7 @@ def test_bisection_linear_vs_newton_quadratic_and_guards() -> None:
         lambda: bisection(lambda x: x, 2.0, 1.0),
         lambda: bisection(lambda x: float("nan") if abs(x) < 0.1 else x, -1.0, 1.0),
         lambda: newton_raphson(lambda x: x, lambda x: 1.0, float("nan")),
+        lambda: newton_raphson(lambda x: x * x - 4.0, lambda x: 2.0 * x, x0=1.0, bounds=(0.5, 1.5)),
     ):
         with pytest.raises(ValueError):
             bad_call()
@@ -199,11 +210,20 @@ def test_brent_cg_and_independent_halo_recovery() -> None:
     q_res = conjugate_gradient(quad, np.array([-4.0, 5.0]), tol=1e-7, max_iter=40)
     assert q_res.converged and q_res.iterations <= 4 and np.allclose(q_res.x, [1.7, -0.8], atol=1e-5)
 
+    # Ill-conditioned convex valley must not prematurely stop after a single transverse step
+    ill = lambda v: float(1e-5 * (v[0] - 10.0) ** 2 + 1e6 * (v[1] - 1.0) ** 2)
+    ill_res = conjugate_gradient(ill, np.array([0.0, 1.0 + 1e-10]), tol=1e-8, max_iter=100)
+    assert ill_res.converged and np.allclose(ill_res.x, [10.0, 1.0], atol=1e-4)
+
     rosen = lambda v: float((1.0 - v[0]) ** 2 + 100.0 * (v[1] - v[0] ** 2) ** 2)
     r_res = conjugate_gradient(rosen, np.array([-1.2, 1.0]), tol=1e-6, max_iter=200)
     assert r_res.converged and np.allclose(r_res.x, [1.0, 1.0], atol=1e-3)
 
-    # Non-finite ray evaluations and non-smooth walls must not report convergence
+    # Unbounded linear+quadratic objective, non-finite ray cliffs, and non-smooth walls must not report convergence
+    unb = lambda v: float(1e-4 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
+    assert not conjugate_gradient(unb, np.array([5.0, 1.0 + 1e-14]), tol=1e-8, max_iter=20).converged
+    cliff = conjugate_gradient(lambda v: float("nan") if v[0] < 0.0 else float((v[0] + 1.0) ** 2), [0.5], max_iter=10)
+    assert not cliff.converged and np.all(np.isfinite(cliff.x)) and cliff.fun < 1.5
     nan_res = conjugate_gradient(lambda v: float("nan") if v[0] < 0.999 else float(v[0] ** 2), [1.0, 0.0], max_iter=5)
     assert not nan_res.converged and np.all(np.isfinite(nan_res.x)) and np.isfinite(nan_res.fun)
     wall = lambda v: float((v[0] - 10.0) ** 2 + 1e8 * max(0.0, -v[1]) ** 2 + 1e4 * max(0.0, v[1]))

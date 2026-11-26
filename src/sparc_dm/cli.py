@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
@@ -155,9 +156,13 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
         m_bar, p_bar = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
         m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
         p_tot = lambda r: p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
+        p_bar_r0 = p_bar(r0_kpc)
         orbit_test = {
             "galaxy": "NGC3198",
             "approximation": "central_force_spherical_equivalent_baryons",
+            "upsilon_disk": ngc_iso.upsilon_disk,
+            "baryons_only_v_esc_kms": float(np.sqrt(max(-2.0 * p_bar_r0, 0.0))),
+            "baryons_only_specific_energy": float(0.5 * v0_kms**2 + p_bar_r0),
             "r0_kpc": r0_kpc,
             "v0_kms": v0_kms,
             "dt_gyr": dt_gyr,
@@ -197,8 +202,12 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
     return results
 
 
-def main() -> None:
-    res = run_survey()
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run the SPARC dark-matter halo survey and NGC 3198 orbit test.")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Directory containing SPARC *_rotmod.dat files.")
+    parser.add_argument("--output", type=Path, default=None, help="Output path for the JSON survey report.")
+    args = parser.parse_args(argv)
+    res = run_survey(data_dir=args.data_dir, output_path=args.output)
     s, o = res["survey"], res["orbit_test"]
     orbit_str = (
         f" | NGC3198 25kpc r_end/r0: Bar={o['baryons_only_rk4']['r_final_ratio']:.2f} "

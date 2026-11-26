@@ -57,7 +57,11 @@ def integrate_radial_mass_grid(
     method: str = "gauss",
     n_nodes: int = 16,
 ) -> np.ndarray:
-    """Cumulative enclosed mass ``M(R) = int_0^R 4*pi*r^2*rho(r) dr`` on ``r_grid``."""
+    """Cumulative enclosed mass ``M(R) = int_0^R 4*pi*r^2*rho(r) dr`` on ``r_grid``.
+
+    For ``method="simpson"``, the ``r = 0`` endpoint is set to ``0.0`` (valid when ``r^2 * rho(r) -> 0`` as
+    ``r -> 0``, as for ISO and NFW halos; use open ``method="gauss"`` for ``1/r^2`` singular profiles).
+    """
     radii = check_radial_inputs(r_grid, method, n_nodes)
     if method == "gauss":
         ref_x, ref_w = gauss_legendre(n_nodes, 0.0, 1.0)
