@@ -73,13 +73,17 @@ def velocity_verlet_orbit(r0_kpc: float, v0_kms: float, mass_fn: MassFunc, dt_gy
 
 
 def orbit_diagnostics(traj: np.ndarray, pot_fn: PotFunc) -> dict[str, float]:
-    """Return max/final radius ratio, relative energy drift, and angular momentum drift."""
+    """Return radial ratios, gauge-invariant energy drift (abs and /K0), and angular momentum drift."""
     arr, r = check_traj(traj)
-    energy = 0.5 * (arr[:, 2] ** 2 + arr[:, 3] ** 2) + np.array([float(pot_fn(float(ri))) for ri in r])
+    kin = 0.5 * (arr[:, 2] ** 2 + arr[:, 3] ** 2)
+    energy = kin + np.array([float(pot_fn(float(ri))) for ri in r])
     ang_mom = arr[:, 0] * arr[:, 3] - arr[:, 1] * arr[:, 2]
+    max_abs_e = float(np.max(np.abs(energy - energy[0])))
     return {
         "r_max_ratio": float(np.max(r) / r[0]),
         "r_final_ratio": float(r[-1] / r[0]),
-        "rel_E_err": float(np.max(np.abs(energy - energy[0])) / max(abs(float(energy[0])), 1e-12)),
+        "abs_E_err": max_abs_e,
+        "rel_K_err": float(max_abs_e / max(float(kin[0]), 1e-12)),
+        "rel_E_err": float(max_abs_e / max(abs(float(energy[0])), 1e-12)),
         "rel_L_err": float(np.max(np.abs(ang_mom - ang_mom[0])) / max(abs(float(ang_mom[0])), 1e-12)),
     }

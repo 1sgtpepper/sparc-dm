@@ -79,6 +79,12 @@ def test_baryonic_failure_dark_halo_fits_and_nfw_trap() -> None:
         fit_nfw = fit_galaxy_halo(load_galaxy(DATA_DIR / f"{name}_rotmod.dat"), "nfw")
         assert fit_nfw.opt.converged and fit_nfw.chi2_red < upper
 
+    # Verify the previously stalling multi-valley galaxies converge cleanly
+    for name in ("NGC5055", "NGC5985", "NGC7814", "UGC03205"):
+        gal_v = load_galaxy(DATA_DIR / f"{name}_rotmod.dat")
+        for k in ("iso", "nfw"):
+            assert fit_galaxy_halo(gal_v, k).opt.converged
+
     with pytest.raises(ValueError):
         halo_model_velocity(ngc, "invalid", 1e7, 2.0, 0.5)
 
@@ -155,6 +161,7 @@ def test_live_survey_and_source_isolation(tmp_path: Path) -> None:
     run_survey(sub_dir, out_json)
     data = json.loads(out_json.read_text(encoding="utf-8"))
     assert data["survey"]["n_galaxies"] == 3
+    assert data["survey"]["non_converged_iso"] == 0 and data["survey"]["non_converged_nfw"] == 0 and data["survey"]["non_converged_baryons"] == 0
     assert data["survey"]["median_chi2_baryons"] > 10.0 * data["survey"]["median_chi2_iso"]
     assert data["deep_dives"]["NGC3198"]["crossover"]["dm_dominated_everywhere"] is False
     assert 5.0 < data["deep_dives"]["NGC3198"]["crossover"]["bisection_kpc"] < 9.0

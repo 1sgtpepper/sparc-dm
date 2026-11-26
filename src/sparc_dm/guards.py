@@ -201,3 +201,18 @@ def active_set_changed(x_old: np.ndarray, x_new: np.ndarray, bounds: BoundsPair)
         return False
     lo, hi = bounds
     return bool(np.any(((x_old <= lo + 1e-12) | (x_old >= hi - 1e-12)) != ((x_new <= lo + 1e-12) | (x_new >= hi - 1e-12))))
+
+
+def hit_bounds_labels(x: np.ndarray, bounds: BoundsPair, labels: tuple[str, ...], tol: float = 1e-4) -> list[str]:
+    """Return bound-hit tags like ``upsilon_d_lo`` or ``r_scale_hi`` for coordinates within ``tol``."""
+    if bounds is None:
+        return []
+    lo, hi = bounds
+    arr = np.asarray(x, dtype=np.float64)
+    hits: list[str] = []
+    for i, name in enumerate(labels):
+        if arr[i] <= lo[i] + tol:
+            hits.append(f"{name}_lo")
+        elif arr[i] >= hi[i] - tol:
+            hits.append(f"{name}_hi")
+    return hits

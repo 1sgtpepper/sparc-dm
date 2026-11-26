@@ -28,6 +28,6 @@ with $G = 4.30091 \times 10^{-6}\text{ kpc (km/s)}^2\,M_\odot^{-1}$. All numeric
 | `src/sparc_dm/integrators.py` | Trapezoid, Simpson ($O(h^4)$), Gauss–Legendre quadrature, and cumulative radial mass integration. |
 | `src/sparc_dm/solvers.py` | Bisection, safeguarded Newton–Raphson, Brent 1D, projected Polak–Ribière+ CG halo fitting, and crossover radii. |
 | `src/sparc_dm/orbits.py` | 2D galactic test-particle ODE solvers (Euler, RK4, Velocity Verlet) and conservation diagnostics. |
-| `src/sparc_dm/cli.py` | End-to-end SPARC survey, NGC 3198 / DDO 154 deep dives, and JSON report writer (`outputs/sparc_results.json`). |
+| `src/sparc_dm/cli.py` | End-to-end 171-galaxy SPARC survey, NGC 3198 / DDO 154 cases, spherical-equivalent NGC 3198 orbit test, and JSON report (`outputs/sparc_results.json`). |
 | `src/sparc_dm/guards.py` | Input validation, small-$r$ Taylor series, overflow safeguards, and box-bound helpers. |
 | `verification/verify_and_plot.py` | Convergence audits and 4-panel summary figure generator (`outputs/sparc_summary.png`). |

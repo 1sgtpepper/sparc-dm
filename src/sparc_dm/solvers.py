@@ -182,28 +182,43 @@ def _gradient(f: Callable[[np.ndarray], float], x: np.ndarray, bounds: BoundsPai
     return grad
 
 
-def _bracket_ray(phi: Callable[[float], float], f0: float, step_init: float, max_step: float) -> tuple[float, float]:
+def _bracket_ray(phi: Callable[[float], float], f0: float, step_init: float, max_step: float) -> tuple[float, float, bool]:
+    """Bracket a strict descent minimum along ``t >= 0``; returns ``(lo, hi, decreased)``."""
     a, b = 0.0, min(step_init, max_step)
     fb = float(phi(b))
-    while (not np.isfinite(fb) or fb > f0) and b > 1e-10:
+    while (not np.isfinite(fb) or fb >= f0) and b > 1e-13:
         b *= 0.25
         fb = float(phi(b))
     if not np.isfinite(fb) or fb >= f0:
-        return 0.0, b
+        return 0.0, b, False
     for _ in range(18):
         c = min(b + 1.61803398875 * (b - a), max_step)
         fc = float(phi(c))
         if not np.isfinite(fc) or fc > fb or c == max_step:
-            return a, c
+            return a, c, True
         a, b, fb = b, c, fc
-    return a, b
+    return a, b, True
+
+
+def _at_machine_floor(
+    loss_fn: Callable[[np.ndarray], float], x: np.ndarray, d_hat: np.ndarray, fx: float, g_norm: float, bounds: BoundsPair
+) -> bool:
+    """Confirm strict local convexity around ``x`` when curvature scales shrink ``t*`` below float64 resolution."""
+    if g_norm >= 1e-3:
+        return False
+    delta = 1e-7
+    p_fwd = np.clip(x + delta * d_hat, bounds[0], bounds[1]) if bounds is not None else (x + delta * d_hat)
+    p_bwd = np.clip(x - delta * d_hat, bounds[0], bounds[1]) if bounds is not None else (x - delta * d_hat)
+    f_fwd, f_bwd = float(loss_fn(p_fwd)), float(loss_fn(p_bwd))
+    floor = fx - 1e-13 * max(1.0, abs(fx))
+    return np.isfinite(f_fwd) and np.isfinite(f_bwd) and f_fwd >= floor and f_bwd >= floor
 
 
 def conjugate_gradient(
     loss_fn: Callable[[np.ndarray], float],
     x0,
     tol: float = 1e-6,
-    max_iter: int = 40,
+    max_iter: int = 500,
     max_step: float = 10.0,
     bounds: BoundsPair = None,
 ) -> OptResult:
@@ -214,7 +229,8 @@ def conjugate_gradient(
     if not (np.isfinite(fx) and np.all(np.isfinite(g))):
         return OptResult(x, fx, 0, False)
 
-    d, steepest = -g.copy(), True
+    d, steepest, step_hint = -g.copy(), True, 0.5
+    restart_period = max(x.size * 2, 6)
     for k in range(1, n_max + 1):
         if float(np.linalg.norm(g)) < tol:
             return OptResult(x, fx, k - 1, True)
@@ -228,14 +244,22 @@ def conjugate_gradient(
             if b_pair is not None
             else (lambda t: float(loss_fn(x + t * d_hat)))
         )
-        lo, hi = _bracket_ray(phi, fx, min(0.5, d_norm), max_step)
+        lo, hi, decreased = _bracket_ray(phi, fx, min(step_hint, d_norm), max_step)
+        if not decreased:
+            if not steepest:
+                d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
+                continue
+            converged = _at_machine_floor(loss_fn, x, d_hat, fx, float(np.linalg.norm(g)), b_pair)
+            return OptResult(x, fx, k - 1 if converged else k, converged)
         line = brent_minimize(phi, lo, hi, tol=1e-7, max_iter=60)
         if not np.isfinite(line.fun) or float(line.fun) >= fx:
             if not steepest:
-                d, steepest = -g.copy(), True
+                d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
             return OptResult(x, fx, k, False)
-        x_new = x + float(line.x) * d_hat
+        step_taken = float(line.x)
+        step_hint = min(max_step, max(step_taken * 2.0, 1e-7))
+        x_new = x + step_taken * d_hat
         if b_pair is not None:
             x_new = np.clip(x_new, b_pair[0], b_pair[1])
         f_new = float(line.fun)
@@ -243,7 +267,10 @@ def conjugate_gradient(
         if not np.all(np.isfinite(g_new)):
             return OptResult(x_new, f_new, k, False)
         gg = float(g @ g)
-        beta = 0.0 if active_set_changed(x, x_new, b_pair) or gg <= 1e-30 else max(0.0, float(g_new @ (g_new - g)) / gg)
+        if active_set_changed(x, x_new, b_pair) or gg <= 1e-30 or (k % restart_period == 0):
+            beta = 0.0
+        else:
+            beta = max(0.0, float(g_new @ (g_new - g)) / gg)
         d = -g_new + beta * d
         dx_norm, df_abs = float(np.linalg.norm(x_new - x)), abs(fx - f_new)
         x, fx, g, steepest = x_new, f_new, g_new, (beta == 0.0)
@@ -288,8 +315,8 @@ def fit_galaxy_halo(galaxy: GalaxyData, model_kind: str = "iso", x0: np.ndarray 
             rho_large = v_ref**2 / (2.0 * np.pi * G_ASTRO * r_large * r_out)
             starts.append(np.clip(np.log10([rho_large, r_large, 0.5]), LOG_LO, LOG_HI))
     best = min(
-        (conjugate_gradient(loss, s, max_iter=100, max_step=4.0, bounds=(LOG_LO, LOG_HI)) for s in starts),
-        key=lambda r: r.fun,
+        (conjugate_gradient(loss, s, max_iter=500, max_step=4.0, bounds=(LOG_LO, LOG_HI)) for s in starts),
+        key=lambda r: (not r.converged, r.fun),
     )
     rho0, r_scale, ups = (float(v) for v in 10.0**best.x)
     vm, _ = halo_model_velocity(galaxy, model_kind, rho0, r_scale, ups)

@@ -9,10 +9,13 @@ from typing import Callable
 import numpy as np
 
 from .data import GalaxyData, load_sparc_catalog
+from .guards import hit_bounds_labels
 from .integrators import integrate_radial_mass_grid
 from .models import G_ASTRO, baryonic_velocity_sq, iso_density, iso_mass_exact, iso_velocity
 from .orbits import euler_orbit, iso_potential, orbit_diagnostics, rk4_orbit, velocity_verlet_orbit
-from .solvers import HaloFit, baryonic_only_fit, find_crossover_radius, fit_galaxy_halo, halo_model_velocity
+from .solvers import LOG_HI, LOG_LO, HaloFit, baryonic_only_fit, find_crossover_radius, fit_galaxy_halo, halo_model_velocity
+
+PARAM_LABELS = ("rho0", "r_scale", "upsilon_d")
 
 
 def _dm_frac(galaxy: GalaxyData, fit: HaloFit) -> float:
@@ -23,7 +26,7 @@ def _dm_frac(galaxy: GalaxyData, fit: HaloFit) -> float:
 def baryon_mass_and_potential(
     galaxy: GalaxyData, upsilon_disk: float
 ) -> tuple[Callable[[float], float], Callable[[float], float]]:
-    """Return consistent radial baryonic ``(mass_fn, pot_fn)`` satisfying ``dPhi/dr = G M(r) / r^2``."""
+    """Construct spherical-equivalent baryonic ``M(r) = r*max(v_bar^2, 0)/G`` and central potential."""
     r_tab = np.concatenate(([0.0], galaxy.rad_kpc))
     m_tab = np.concatenate(([0.0], galaxy.rad_kpc * np.maximum(baryonic_velocity_sq(galaxy, upsilon_disk), 0.0) / G_ASTRO))
     r_min, r_max = float(galaxy.rad_kpc[0]), float(r_tab[-1])
@@ -112,6 +115,8 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
     for name, gal in catalog.items():
         fb, fi, fn = baryonic_only_fit(gal), fit_galaxy_halo(gal, "iso"), fit_galaxy_halo(gal, "nfw")
         fits[name] = (fb, fi, fn)
+        iso_hits = hit_bounds_labels(fi.opt.x, (LOG_LO, LOG_HI), PARAM_LABELS)
+        nfw_hits = hit_bounds_labels(fn.opt.x, (LOG_LO, LOG_HI), PARAM_LABELS)
         rows.append({
             "name": name,
             "n_points": int(gal.rad_kpc.size),
@@ -119,14 +124,19 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
             "chi2_baryons": fb.chi2_red,
             "chi2_iso": fi.chi2_red,
             "chi2_nfw": fn.chi2_red,
+            "baryons_converged": bool(fb.opt.converged),
+            "iso_converged": bool(fi.opt.converged),
+            "nfw_converged": bool(fn.opt.converged),
             "f_dm_outer_iso": _dm_frac(gal, fi),
             "f_dm_outer_nfw": _dm_frac(gal, fn),
             "iso_rho0": fi.rho0,
             "iso_rc": fi.r_scale,
             "iso_upsilon_d": fi.upsilon_disk,
+            "iso_bounds_hit": iso_hits,
             "nfw_rhos": fn.rho0,
             "nfw_rs": fn.r_scale,
             "nfw_upsilon_d": fn.upsilon_disk,
+            "nfw_bounds_hit": nfw_hits,
         })
 
     orbit_test: dict[str, object] | None = None
@@ -139,6 +149,7 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
         p_tot = lambda r: p_bar(r) + iso_potential(r, ngc_iso.rho0, ngc_iso.r_scale)
         orbit_test = {
             "galaxy": "NGC3198",
+            "approximation": "central_force_spherical_equivalent_baryons",
             "r0_kpc": r0_kpc,
             "v0_kms": v0_kms,
             "dt_gyr": dt_gyr,
@@ -149,6 +160,9 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
             "dark_halo_euler": orbit_diagnostics(euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps), p_tot),
         }
 
+    def _count_hits(key: str) -> dict[str, int]:
+        return {p: sum(1 for r in rows if any(h.startswith(f"{p}_") for h in r[key])) for p in PARAM_LABELS}
+
     iso_wins = sum(1 for r in rows if r["chi2_iso"] < r["chi2_nfw"])
     nfw_wins = sum(1 for r in rows if r["chi2_nfw"] < r["chi2_iso"])
     results: dict[str, object] = {
@@ -156,6 +170,11 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
             "n_galaxies": len(rows),
             "iso_wins": iso_wins,
             "nfw_wins": nfw_wins,
+            "non_converged_baryons": sum(1 for r in rows if not r["baryons_converged"]),
+            "non_converged_iso": sum(1 for r in rows if not r["iso_converged"]),
+            "non_converged_nfw": sum(1 for r in rows if not r["nfw_converged"]),
+            "iso_bounds_hits": _count_hits("iso_bounds_hit"),
+            "nfw_bounds_hits": _count_hits("nfw_bounds_hit"),
             "median_chi2_baryons": float(np.median([r["chi2_baryons"] for r in rows])),
             "median_chi2_iso": float(np.median([r["chi2_iso"] for r in rows])),
             "median_chi2_nfw": float(np.median([r["chi2_nfw"] for r in rows])),
