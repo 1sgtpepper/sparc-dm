@@ -128,13 +128,18 @@ def test_crossover_ngc3198_ddo154_and_safeguarded_newton() -> None:
     with pytest.raises(ValueError):
         find_crossover_radius(ngc, 0.0, 2.0, 0.5, "iso")
 
-    # Outermost upward crossing selection on multi-crossing synthetic curve
+    # Outermost upward crossing selection on multi-crossing and multi-zero plateau synthetic curves
     r_m = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     v_dm_m = iso_velocity(r_m, 5e7, 2.0)
     v_bar_m = np.array([v_dm_m[0] + 10.0, v_dm_m[1] - 5.0, v_dm_m[2] + 5.0, v_dm_m[3] - 10.0, v_dm_m[4] - 20.0])
     syn_multi = GalaxyData("MULTI", 10.0, r_m, v_dm_m, np.ones_like(r_m), np.zeros_like(r_m), v_bar_m, np.zeros_like(r_m))
     bm, nm = find_crossover_radius(syn_multi, 5e7, 2.0, 1.0, "iso")
     assert 3.0 < bm.root < 4.0 and abs(bm.root - nm.root) < 1e-6
+
+    v_bar_z2 = np.array([v_dm_m[0] + 10.0, v_dm_m[1], v_dm_m[2], v_dm_m[3] - 10.0, v_dm_m[4] - 20.0])
+    syn_z2 = GalaxyData("ZERO2", 10.0, r_m, v_dm_m, np.ones_like(r_m), np.zeros_like(r_m), v_bar_z2, np.zeros_like(r_m))
+    bz, nz = find_crossover_radius(syn_z2, 5e7, 2.0, 1.0, "iso")
+    assert bz.converged and nz.converged and bz.root == 3.0 and nz.root == 3.0
 
 
 def test_ngc3198_orbits_and_baryon_potential_consistency() -> None:
@@ -187,6 +192,12 @@ def test_live_survey_and_source_isolation(tmp_path: Path) -> None:
     assert 0.4 < data["orbit_test"]["upsilon_disk"] < 0.7
     assert data["orbit_test"]["baryons_only_specific_energy"] > 0.0
     assert data["orbit_test"]["baryons_only_v_esc_kms"] < data["orbit_test"]["v0_kms"]
+
+    short_dir = tmp_path / "short_only"
+    short_dir.mkdir()
+    shutil.copy(DATA_DIR / "D512-2_rotmod.dat", short_dir / "D512-2_rotmod.dat")
+    with pytest.raises(ValueError, match="No galaxies with >= 5"):
+        run_survey(short_dir, tmp_path / "empty.json")
 
     with pytest.raises(SystemExit) as exc:
         cli_main(["--help"])

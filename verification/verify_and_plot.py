@@ -16,7 +16,7 @@ from sparc_dm.data import load_galaxy
 from sparc_dm.integrators import simpson_integrate, trapezoid_integrate
 from sparc_dm.models import G_ASTRO, baryonic_velocity_sq, iso_mass_exact, iso_velocity, total_velocity
 from sparc_dm.orbits import KPC_PER_GYR_PER_KMS, euler_orbit, rk4_orbit, velocity_verlet_orbit
-from sparc_dm.solvers import baryonic_only_fit, find_crossover_radius, fit_galaxy_halo, halo_model_velocity
+from sparc_dm.solvers import halo_model_velocity
 
 
 def _quadrature_and_ode_convergence() -> dict[str, object]:
@@ -75,15 +75,13 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     survey_data = run_survey(root / "data", out_dir / "sparc_results.json")
 
     ngc = load_galaxy(root / "data" / "NGC3198_rotmod.dat")
-    ngc_bar = baryonic_only_fit(ngc)
-    ngc_iso = fit_galaxy_halo(ngc, "iso")
-    ngc_nfw = fit_galaxy_halo(ngc, "nfw")
-    bis, newt = find_crossover_radius(ngc, ngc_iso.rho0, ngc_iso.r_scale, ngc_iso.upsilon_disk, "iso")
+    dd = survey_data["deep_dives"]["NGC3198"]
+    ngc_bar, ngc_iso, ngc_nfw, cross = dd["baryons"], dd["iso"], dd["nfw"], dd["crossover"]
 
     r0_kpc, dt_gyr, n_steps = 25.0, 0.01, 200
     v0_kms = float(np.interp(r0_kpc, ngc.rad_kpc, ngc.v_obs))
-    m_bar, _ = baryon_mass_and_potential(ngc, ngc_iso.upsilon_disk)
-    m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso.rho0, ngc_iso.r_scale))
+    m_bar, _ = baryon_mass_and_potential(ngc, ngc_iso["upsilon_disk"])
+    m_tot = lambda r: m_bar(r) + float(iso_mass_exact(r, ngc_iso["rho0"], ngc_iso["rc"]))
     tr_bar = rk4_orbit(r0_kpc, v0_kms, m_bar, dt_gyr, n_steps)
     tr_dm_rk4 = rk4_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
     tr_dm_euler = euler_orbit(r0_kpc, v0_kms, m_tot, dt_gyr, n_steps)
@@ -107,24 +105,24 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     # --- Panel A: NGC 3198 Rotation Curve (Baryons-only vs ISO vs NFW + Crossover) ---
     ax = axes[0, 0]
     r = ngc.rad_kpc
-    v_bar_only = total_velocity(baryonic_velocity_sq(ngc, ngc_bar.upsilon_disk), 0.0)
-    v_bar_iso = total_velocity(baryonic_velocity_sq(ngc, ngc_iso.upsilon_disk), 0.0)
-    v_tot_iso, v_dm_iso = halo_model_velocity(ngc, "iso", ngc_iso.rho0, ngc_iso.r_scale, ngc_iso.upsilon_disk)
-    v_tot_nfw, _ = halo_model_velocity(ngc, "nfw", ngc_nfw.rho0, ngc_nfw.r_scale, ngc_nfw.upsilon_disk)
+    v_bar_only = total_velocity(baryonic_velocity_sq(ngc, ngc_bar["upsilon_disk"]), 0.0)
+    v_bar_iso = total_velocity(baryonic_velocity_sq(ngc, ngc_iso["upsilon_disk"]), 0.0)
+    v_tot_iso, v_dm_iso = halo_model_velocity(ngc, "iso", ngc_iso["rho0"], ngc_iso["rc"], ngc_iso["upsilon_disk"])
+    v_tot_nfw, _ = halo_model_velocity(ngc, "nfw", ngc_nfw["rhos"], ngc_nfw["rs"], ngc_nfw["upsilon_disk"])
 
     ax.errorbar(r, ngc.v_obs, yerr=ngc.v_err, fmt="o", color="#222222", ms=3.5, elinewidth=0.9, capsize=2, zorder=5, label="SPARC Observed $v_{\\mathrm{obs}}$")
-    ax.plot(r, v_bar_only, "--", color="#c0392b", lw=1.7, label=f"Baryons-only ($\\chi^2_\\nu={ngc_bar.chi2_red:.1f}$)")
-    ax.plot(r, v_tot_iso, "-", color="#1f5a8a", lw=2.2, label=f"Baryons + ISO Core ($\\chi^2_\\nu={ngc_iso.chi2_red:.2f}$)")
-    ax.plot(r, v_tot_nfw, "-.", color="#d97706", lw=1.7, label=f"Baryons + NFW Cusp ($\\chi^2_\\nu={ngc_nfw.chi2_red:.2f}$)")
-    ax.plot(r, v_bar_iso, ":", color="#6b7280", lw=1.5, label=f"ISO fit: Baryons ($\\Upsilon_d={ngc_iso.upsilon_disk:.2f}$)")
+    ax.plot(r, v_bar_only, "--", color="#c0392b", lw=1.7, label=f"Baryons-only ($\\chi^2_\\nu={ngc_bar['chi2_red']:.1f}$)")
+    ax.plot(r, v_tot_iso, "-", color="#1f5a8a", lw=2.2, label=f"Baryons + ISO Core ($\\chi^2_\\nu={ngc_iso['chi2_red']:.2f}$)")
+    ax.plot(r, v_tot_nfw, "-.", color="#d97706", lw=1.7, label=f"Baryons + NFW Cusp ($\\chi^2_\\nu={ngc_nfw['chi2_red']:.2f}$)")
+    ax.plot(r, v_bar_iso, ":", color="#6b7280", lw=1.5, label=f"ISO fit: Baryons ($\\Upsilon_d={ngc_iso['upsilon_disk']:.2f}$)")
     ax.plot(r, v_dm_iso, linestyle=(0, (3, 1.5, 1, 1.5)), color="#0f766e", lw=1.6, label="ISO fit: Dark Halo")
 
-    r_cross = bis.root
-    v_cross = float(iso_velocity(r_cross, ngc_iso.rho0, ngc_iso.r_scale))
+    r_cross = float(cross["bisection_kpc"])
+    v_cross = float(iso_velocity(r_cross, ngc_iso["rho0"], ngc_iso["rc"]))
     ax.axvline(r_cross, color="#0f766e", ls="--", lw=1.1, alpha=0.8)
     ax.scatter([r_cross], [v_cross], s=48, color="#0f766e", edgecolor="white", linewidth=0.9, zorder=6)
     ax.annotate(
-        f"Crossover $r_\\times = {r_cross:.2f}$ kpc\n(Bisect {bis.iterations} vs Newton {newt.iterations} it)",
+        f"Crossover $r_\\times = {r_cross:.2f}$ kpc\n(Bisect {cross['bisection_iters']} vs Newton {cross['newton_iters']} it)",
         xy=(r_cross, v_cross),
         xytext=(r_cross + 4.0, v_cross + 62.0),
         fontsize=8.3,
@@ -147,7 +145,7 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     f_dm = np.array([g["f_dm_outer_iso"] for g in gals], dtype=np.float64)
 
     sc = ax.scatter(chi_iso, chi_nfw, c=f_dm, cmap="viridis", vmin=0.0, vmax=1.0, s=26, alpha=0.85, edgecolors="#1f2937", linewidths=0.35, zorder=4)
-    ax.plot([1.0e-2, 1.5e2], [1.0e-2, 1.5e2], "--", color="#4b5563", lw=1.2, label="Equal fit ($\\chi^2_{\\mathrm{ISO}} = \\chi^2_{\\mathrm{NFW}}$)")
+    ax.plot([1.0e-2, 1.5e2], [1.0e-2, 1.5e2], "--", color="#4b5563", lw=1.2)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(1.0e-2, 1.5e2)
@@ -200,7 +198,7 @@ def verify_and_plot(output_dir: Path | str | None = None) -> Path:
     ax.plot(r0_kpc * np.cos(theta), r0_kpc * np.sin(theta), ":", color="#9ca3af", lw=1.1, label=f"Initial circle $r_0 = {r0_kpc:.0f}$ kpc")
     ax.plot(tr_dm_rk4[:, 0], tr_dm_rk4[:, 1], "-", color="#1f5a8a", lw=2.2, label="Baryons + ISO Halo (RK4, bound)")
     ax.plot(tr_dm_euler[:, 0], tr_dm_euler[:, 1], "--", color="#d97706", lw=1.5, label="Baryons + ISO Halo (Euler drift)")
-    ax.plot(tr_bar[:, 0], tr_bar[:, 1], "-.", color="#c0392b", lw=2.1, label=f"Halo removed ($\\Upsilon_d={ngc_iso.upsilon_disk:.2f}$, RK4, escapes)")
+    ax.plot(tr_bar[:, 0], tr_bar[:, 1], "-.", color="#c0392b", lw=2.1, label=f"Halo removed ($\\Upsilon_d={ngc_iso['upsilon_disk']:.2f}$, RK4, escapes)")
     ax.scatter([0.0], [0.0], s=55, marker="*", color="#111827", zorder=6, label="NGC 3198 center")
     ax.scatter([r0_kpc], [0.0], s=42, color="#0f766e", edgecolor="white", linewidth=0.8, zorder=7)
 

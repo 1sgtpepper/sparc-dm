@@ -20,6 +20,7 @@ from .guards import (
 from .models import G_ASTRO, baryonic_velocity_sq, chi2_reduced, iso_velocity, nfw_velocity, total_velocity
 
 GOLDEN = 0.5 * (3.0 - np.sqrt(5.0))  # ~0.381966
+_EPS = float(np.finfo(np.float64).eps)
 HALO_VELOCITY = {"iso": iso_velocity, "nfw": nfw_velocity}
 LOG_LO = np.array([3.0, -1.0, -1.0])
 LOG_HI = np.array([11.0, 3.0, np.log10(2.0)])
@@ -79,6 +80,27 @@ def bisection(f: Callable[[float], float], a: float, b: float, tol: float = 1e-8
     return RootResult(mid, fm, n_max, False, tuple(trace))
 
 
+def _root_witness(
+    f: Callable[[float], float], x: float, fx: float, dfx: float, tol: float, bounds: tuple[float, float] | None
+) -> bool:
+    """Return True when ``f`` crosses zero within ``±max(tol, 2 ULP)`` of ``x`` with slope matching ``dfx``."""
+    span = max(tol, 2.0 * _EPS * max(abs(x), 1.0))
+    x_lo, x_hi = x - span, x + span
+    if bounds is not None:
+        x_lo, x_hi = max(bounds[0], x_lo), min(bounds[1], x_hi)
+    flo, fhi = float(f(x_lo)), float(f(x_hi))
+    if not (np.isfinite(flo) and np.isfinite(fhi)):
+        return False
+    sign_change = (
+        flo == 0.0
+        or fhi == 0.0
+        or (flo > 0.0) != (fhi > 0.0)
+        or (flo > 0.0) != (fx > 0.0)
+        or (fhi > 0.0) != (fx > 0.0)
+    )
+    return sign_change and (fhi - flo) * dfx > 0.0
+
+
 def newton_raphson(
     f: Callable[[float], float],
     df: Callable[[float], float],
@@ -108,7 +130,7 @@ def newton_raphson(
         return RootResult(x, fx, 0, False, tuple(trace))
     if fx == 0.0:
         return RootResult(x, 0.0, 0, True, tuple(trace))
-    f_scale = max(abs(fx), abs(f_lo), abs(f_hi)) if bracketed else abs(fx)
+    f_scale = min(1.0, max(abs(fx), abs(f_lo), abs(f_hi)) if bracketed else abs(fx))
 
     for k in range(1, n_max + 1):
         if bracketed:
@@ -125,34 +147,36 @@ def newton_raphson(
         else:
             dx = fx / dfx
             x_raw = x - dx
-            if np.isfinite(x_raw) and abs(dx) <= tol and (not bracketed or b_lo <= x_raw <= b_hi):
+            if not np.isfinite(x_raw):
+                if not bracketed:
+                    return RootResult(x, fx, k - 1, False, tuple(trace))
+                x_next, used_bisection = 0.5 * (b_lo + b_hi), True
+            elif abs(dx) <= tol and (not bracketed or b_lo <= x_raw <= b_hi):
                 fx_raw = float(f(x_raw))
                 if not np.isfinite(fx_raw):
                     return RootResult(x_raw, fx_raw, k, False, tuple(trace) + (x_raw,))
-                res_tol = max(tol * f_scale, 1e-14 * abs(dfx) * max(abs(x_raw), tol))
-                if fx_raw == 0.0 or abs(fx_raw) <= res_tol:
+                cur_bounds = (b_lo, b_hi) if bracketed else None
+                if fx_raw == 0.0 or abs(fx_raw) <= tol * f_scale or _root_witness(f, x_raw, fx_raw, dfx, tol, cur_bounds):
                     trace.append(x_raw)
                     return RootResult(x_raw, fx_raw, k, True, tuple(trace))
-            if bracketed and (not np.isfinite(x_raw) or x_raw <= b_lo or x_raw >= b_hi):
+                if bracketed and (x_raw <= b_lo or x_raw >= b_hi):
+                    x_next, used_bisection = 0.5 * (b_lo + b_hi), True
+                else:
+                    x, fx = x_raw, fx_raw
+                    trace.append(x)
+                    continue
+            elif bracketed and (x_raw <= b_lo or x_raw >= b_hi):
                 x_next, used_bisection = 0.5 * (b_lo + b_hi), True
-            elif not np.isfinite(x_raw):
-                return RootResult(x, fx, k - 1, False, tuple(trace))
             else:
                 x_next = x_raw
 
-        step, x = abs(x_next - x), x_next
+        x = x_next
         trace.append(x)
         fx = float(f(x))
         if not np.isfinite(fx):
             return RootResult(x, fx, k, False, tuple(trace))
-        if fx == 0.0:
-            return RootResult(x, 0.0, k, True, tuple(trace))
-        if used_bisection and 0.5 * (b_hi - b_lo) <= tol:
+        if fx == 0.0 or (used_bisection and 0.5 * (b_hi - b_lo) <= tol):
             return RootResult(x, fx, k, True, tuple(trace))
-        if not used_bisection and step <= tol:
-            res_tol = max(tol * f_scale, 1e-14 * abs(dfx) * max(abs(x), tol))
-            if abs(fx) <= res_tol:
-                return RootResult(x, fx, k, True, tuple(trace))
     return RootResult(x, fx, n_max, False, tuple(trace))
 
 
@@ -197,9 +221,9 @@ def brent_minimize(f: Callable[[float], float], a: float, b: float, tol: float =
 
 
 def _gradient(f: Callable[[np.ndarray], float], x: np.ndarray, bounds: BoundsPair) -> np.ndarray:
-    h = 1e-5
     grad = np.empty(x.size, dtype=np.float64)
     for i in range(x.size):
+        h = max(1e-5, 1e-11 * abs(float(x[i])))
         lo_i = float(bounds[0][i]) if bounds is not None else -np.inf
         hi_i = float(bounds[1][i]) if bounds is not None else np.inf
         x_lo, x_hi = max(lo_i, x[i] - h), min(hi_i, x[i] + h)
@@ -241,29 +265,48 @@ def _bracket_ray(phi: Callable[[float], float], f0: float, step_init: float, max
 
 
 def _at_machine_floor(
-    loss_fn: Callable[[np.ndarray], float], x: np.ndarray, d_hat: np.ndarray, fx: float, g_norm: float, bounds: BoundsPair
+    loss_fn: Callable[[np.ndarray], float], x: np.ndarray, g: np.ndarray, fx: float, tol: float, bounds: BoundsPair
 ) -> bool:
-    """Confirm local non-descent along ``d_hat`` and every coordinate axis at the float64 floor."""
-    if g_norm >= 1e-3:
+    """Confirm strict local convexity and float64-floor Newton decrement on free coordinates."""
+    if float(np.linalg.norm(g)) >= 1e-3:
         return False
-    floor = fx - 1e-13 * max(1.0, abs(fx))
-    for sign in (1.0, -1.0):
-        pt = x + sign * 1e-7 * d_hat
-        if bounds is not None:
-            pt = np.clip(pt, bounds[0], bounds[1])
-        val = float(loss_fn(pt))
-        if not np.isfinite(val) or val < floor:
-            return False
-    for i in range(x.size):
-        for sign in (1.0, -1.0):
-            pt = x.copy()
-            pt[i] += sign * 1e-4
-            if bounds is not None:
-                pt = np.clip(pt, bounds[0], bounds[1])
-            val = float(loss_fn(pt))
-            if not np.isfinite(val) or val < floor:
-                return False
-    return True
+    free = np.ones(x.size, dtype=bool)
+    if bounds is not None:
+        lo, hi = bounds
+        g_raw = _gradient(loss_fn, x, bounds)
+        free = ~(((x <= lo + 1e-12) & (g_raw > 0.0)) | ((x >= hi - 1e-12) & (g_raw < 0.0)))
+    idx = np.flatnonzero(free)
+    if idx.size == 0:
+        return True
+    if idx.size > 10:
+        return False
+    m = idx.size
+    H = np.empty((m, m), dtype=np.float64)
+    for a, i in enumerate(idx):
+        h = max(1e-4, 1e-10 * abs(float(x[i])))
+        lo_i = float(bounds[0][i]) if bounds is not None else -np.inf
+        hi_i = float(bounds[1][i]) if bounds is not None else np.inf
+        x_lo, x_hi = max(lo_i, x[i] - h), min(hi_i, x[i] + h)
+        p_lo, p_hi = x.copy(), x.copy()
+        p_lo[i], p_hi[i] = x_lo, x_hi
+        H[:, a] = (_gradient(loss_fn, p_hi, bounds)[idx] - _gradient(loss_fn, p_lo, bounds)[idx]) / (x_hi - x_lo)
+    H = 0.5 * (H + H.T)
+    if not np.all(np.isfinite(H)):
+        return False
+    evals, evecs = np.linalg.eigh(H)
+    if float(evals[0]) <= 0.0:
+        return False
+    gf = g[idx]
+    step = evecs @ ((evecs.T @ gf) / evals)
+    df_pred = 0.5 * float(gf @ step)
+    if df_pred > 1e-10 * max(1.0, abs(fx)) or float(np.linalg.norm(step)) > max(100.0 * tol, 1e-4):
+        return False
+    pt = x.copy()
+    pt[idx] -= step
+    if bounds is not None:
+        pt = np.clip(pt, bounds[0], bounds[1])
+    f_try = float(loss_fn(pt))
+    return np.isfinite(f_try) and f_try >= fx - 1e-10 * max(1.0, abs(fx))
 
 
 def conjugate_gradient(
@@ -276,9 +319,8 @@ def conjugate_gradient(
 ) -> OptResult:
     """Projected Polak-Ribiere+ CG with finite-diff gradient, monotone Brent line search, and combined stopping rule.
 
-    Converges when projected ``||g|| < tol``, or when consecutive steps stall at the float64 floor
-    (``||dx|| < 1e-9``, ``|df| <= 1e-12*max(1, |f|)``, ``||g|| < 1e-3``) and coordinate-axis probes confirm no
-    feasible descent around ``x``.
+    Converges when projected ``||g|| < tol``, or when line search stalls at a strictly convex float64-floor
+    minimum verified by the free-coordinate Hessian and Newton decrement.
     """
     x, n_max, b_pair = check_cg_inputs(x0, tol, max_iter, max_step, bounds)
     fx = float(loss_fn(x))
@@ -301,19 +343,19 @@ def conjugate_gradient(
             if b_pair is not None
             else (lambda t: float(loss_fn(x + t * d_hat)))
         )
-        lo, hi, decreased = _bracket_ray(phi, fx, min(step_hint, d_norm), max_step)
+        lo, hi, decreased = _bracket_ray(phi, fx, step_hint, max_step)
         if not decreased:
             if not steepest:
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
-            converged = _at_machine_floor(loss_fn, x, d_hat, fx, float(np.linalg.norm(g)), b_pair)
+            converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
             return OptResult(x, fx, k - 1 if converged else k, converged)
         line = brent_minimize(phi, lo, hi, tol=1e-9, max_iter=80)
         if not np.isfinite(line.fun) or float(line.fun) >= fx:
             if not steepest:
                 d, steepest, step_hint = -g.copy(), True, min(step_hint, 1e-2)
                 continue
-            converged = _at_machine_floor(loss_fn, x, d_hat, fx, float(np.linalg.norm(g)), b_pair)
+            converged = _at_machine_floor(loss_fn, x, g, fx, tol, b_pair)
             return OptResult(x, fx, k - 1 if converged else k, converged)
         step_taken = float(line.x)
         step_hint = min(max_step, max(step_taken * 2.0, 1e-8))
@@ -332,12 +374,11 @@ def conjugate_gradient(
         d = -g_new + beta * d
         dx_norm, df_abs = float(np.linalg.norm(x_new - x)), abs(fx - f_new)
         x, fx, g, steepest = x_new, f_new, g_new, (beta == 0.0)
-        g_norm = float(np.linalg.norm(g))
-        if g_norm < tol:
+        if float(np.linalg.norm(g)) < tol:
             return OptResult(x, fx, k, True)
         if dx_norm < 1e-9 and df_abs <= 1e-12 * max(1.0, abs(fx)):
             stall_count += 1
-            if stall_count >= 2 and _at_machine_floor(loss_fn, x, d_hat, fx, g_norm, b_pair):
+            if stall_count >= 2 and _at_machine_floor(loss_fn, x, g, fx, tol, b_pair):
                 return OptResult(x, fx, k, True)
         else:
             stall_count = 0
@@ -415,17 +456,19 @@ def find_crossover_radius(
     r_tab, vb2_tab = galaxy.rad_kpc, baryonic_velocity_sq(galaxy, upsilon_disk)
     r_min, r_max, v_halo = float(r_tab[0]), float(r_tab[-1]), HALO_VELOCITY[model_kind]
     vals = v_halo(r_tab, rho0, rc) ** 2 - vb2_tab
-    strict_up = (vals[:-1] < 0.0) & (vals[1:] > 0.0)
-    zero_up = np.zeros_like(strict_up)
-    for i in range(vals.size - 1):
-        if vals[i] < 0.0 and vals[i + 1] == 0.0 and (i + 1 == vals.size - 1 or vals[i + 2] > 0.0):
-            zero_up[i] = True
-        elif i == 0 and vals[0] == 0.0 and vals[1] > 0.0:
-            zero_up[0] = True
-    up = np.nonzero(strict_up | zero_up)[0]
-    if up.size == 0:
+    up_idx: int | None = None
+    last_sign = 0
+    for i, val in enumerate(vals):
+        sign = 1 if val > 0.0 else (-1 if val < 0.0 else 0)
+        if sign > 0 and (last_sign < 0 or (last_sign == 0 and i > 0)):
+            up_idx = i - 1
+        elif sign == 0 and i == vals.size - 1 and last_sign < 0:
+            up_idx = i - 1
+        if sign != 0:
+            last_sign = sign
+    if up_idx is None:
         raise ValueError(f"{galaxy.name}: no baryon->dark-matter crossover in observed range [{r_min}, {r_max}] kpc")
-    lo, hi = float(r_tab[up[-1]]), float(r_tab[up[-1] + 1])
+    lo, hi = float(r_tab[up_idx]), float(r_tab[up_idx + 1])
     f = lambda r: float(v_halo(r, rho0, rc) ** 2 - np.interp(r, r_tab, vb2_tab))
 
     def df(r: float) -> float:

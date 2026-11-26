@@ -10,7 +10,7 @@ Dark-matter halo rotation-curve modeling, numerical quadrature, nonlinear optimi
 pip install -e ".[dev]"
 sparc-dm                               # runs full SPARC survey -> outputs/sparc_results.json
 pytest                                 # runs automated numerical & physics verification tests
-python verification/verify_and_plot.py # generates 4-panel summary -> outputs/sparc_summary.png
+python verification/verify_and_plot.py # regenerates outputs/sparc_results.json and outputs/sparc_summary.png
 ```
 
 ## Architecture

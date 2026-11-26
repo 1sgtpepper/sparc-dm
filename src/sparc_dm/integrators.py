@@ -76,7 +76,10 @@ def integrate_radial_mass_grid(
             continue
         if method == "gauss":
             pts = r0 + (r1 - r0) * ref_x
-            panels[i] = (r1 - r0) * float(np.dot(ref_w, 4.0 * np.pi * pts * pts * np.asarray(rho_fn(pts), dtype=np.float64)))
+            rho_vals = np.asarray(rho_fn(pts), dtype=np.float64)
+            if not np.all(np.isfinite(rho_vals)):
+                raise ValueError("Non-finite density values encountered during radial integration")
+            panels[i] = (r1 - r0) * float(np.dot(ref_w, 4.0 * np.pi * pts * pts * rho_vals))
         else:
             pts = np.linspace(r0, r1, int(n_nodes) + 1)
             integrand = np.zeros_like(pts)

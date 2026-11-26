@@ -117,7 +117,10 @@ def run_survey(data_dir: str | Path | None = None, output_path: str | Path | Non
     """Run SPARC survey, deep dives (NGC3198/DDO154 if present), and NGC3198 outer-star orbit test."""
     repo_root = Path(__file__).resolve().parents[2]
     root = repo_root if (repo_root / "data").is_dir() else Path.cwd()
-    catalog = load_sparc_catalog(Path(data_dir) if data_dir is not None else (root / "data"), min_points=5)
+    target_dir = Path(data_dir) if data_dir is not None else (root / "data")
+    catalog = load_sparc_catalog(target_dir, min_points=5)
+    if not catalog:
+        raise ValueError(f"No galaxies with >= 5 radial measurements found in {target_dir}")
     out_file = Path(output_path) if output_path is not None else (root / "outputs" / "sparc_results.json")
     out_file.parent.mkdir(parents=True, exist_ok=True)
     rows, fits = [], {}

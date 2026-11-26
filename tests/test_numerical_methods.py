@@ -149,6 +149,7 @@ def test_trapezoid_simpson_orders_and_radial_mass_grid() -> None:
         lambda: trapezoid_integrate(np.array([1.0, float("inf")]), 0.5),
         lambda: integrate_radial_mass_grid(lambda r: np.ones_like(r), np.array([-1.0, 1.0])),
         lambda: integrate_radial_mass_grid(lambda r: np.ones_like(r), np.array([1.0]), method="simpson", n_nodes=3),
+        lambda: integrate_radial_mass_grid(lambda r: np.full_like(r, float("nan")), np.array([1.0]), method="gauss", n_nodes=4),
     ):
         with pytest.raises(ValueError):
             bad_call()
@@ -183,7 +184,33 @@ def test_bisection_linear_vs_newton_quadratic_and_guards() -> None:
     assert not newton_raphson(
         lambda x: math.atan(1e12 * x) + 2.0, lambda x: 1e12 / (1.0 + (1e12 * x) ** 2), x0=0.0, tol=1e-10
     ).converged
+    assert not newton_raphson(
+        lambda x: math.atan(1e12 * (x - 1000.0)) + 2.0,
+        lambda x: 1e12 / (1.0 + (1e12 * (x - 1000.0)) ** 2),
+        x0=1000.0,
+        tol=1e-10,
+    ).converged
     assert not newton_raphson(lambda x: 1.0 + 1.0 / (x * x), lambda x: -2.0 / (x**3), x0=1e-10, tol=1e-10).converged
+    assert not newton_raphson(
+        lambda x: 1.0 + 1.0 / ((x - 1e4) ** 2), lambda x: -2.0 / ((x - 1e4) ** 3), x0=1e4 + 1e-10, tol=1e-10
+    ).converged
+    assert not newton_raphson(lambda x: 1.0 + math.exp(1e12 * x), lambda x: 1e12 * math.exp(1e12 * x), x0=3e-11, tol=1e-10).converged
+    assert not newton_raphson(lambda x: 1.0 + 1e22 * x * x, lambda x: 2e22 * x, x0=1.0, tol=1e-10).converged
+    assert not newton_raphson(lambda x: 1.0 / (x - 1.0), lambda x: -1.0 / ((x - 1.0) ** 2), x0=1.0 + 1e-11, tol=1e-10).converged
+
+    # Steep bracketed root and boundary-clamped domain-guarded witness
+    nr_steep = newton_raphson(lambda x: math.exp(1000.0 * x) - 1.0, lambda x: 1000.0 * math.exp(1000.0 * x), x0=0.049, tol=1e-3, bounds=(-0.01, 0.05))
+    assert nr_steep.converged and abs(nr_steep.root) <= 1e-3
+
+    eps = float(np.finfo(np.float64).eps)
+
+    def _dom_f(x: float) -> float:
+        if x < 1.0:
+            raise ValueError("domain violation")
+        return math.atan((x - 1.0) / eps - 0.5)
+
+    nr_dom = newton_raphson(_dom_f, lambda x: (1.0 / eps) / (1.0 + ((x - 1.0) / eps - 0.5) ** 2), x0=1.0 + eps, tol=1e-10, bounds=(1.0, 2.0))
+    assert nr_dom.converged and 1.0 <= nr_dom.root <= 1.0 + 2.0 * eps
     assert not bisection(lambda x: x - 0.3, 0.0, 1.0, tol=1e-12, max_iter=2).converged
 
     for bad_call in (
@@ -210,18 +237,39 @@ def test_brent_cg_and_independent_halo_recovery() -> None:
     q_res = conjugate_gradient(quad, np.array([-4.0, 5.0]), tol=1e-7, max_iter=40)
     assert q_res.converged and q_res.iterations <= 4 and np.allclose(q_res.x, [1.7, -0.8], atol=1e-5)
 
-    # Ill-conditioned convex valley must not prematurely stop after a single transverse step
+    # Small-scale smooth quadratic and large-|x| warning-free convergence
+    small_q = conjugate_gradient(lambda v: float(1e-8 * (v[0] - 10.0) ** 2), np.array([0.0]), tol=1e-14, max_iter=30)
+    assert small_q.converged and abs(float(small_q.x[0]) - 10.0) < 1e-5
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        big_x = conjugate_gradient(
+            lambda v: float(1.0 + 1e-8 * (v[0] - 1e13) ** 2), np.array([1e13 + 1.0]), tol=1e-10, max_iter=30
+        )
+        assert big_x.converged and abs(float(big_x.x[0]) - 1e13) < 1e-3
+
+    # Ill-conditioned convex valley (axis-aligned and 45-deg rotated) must not falsely converge far from minimum
     ill = lambda v: float(1e-5 * (v[0] - 10.0) ** 2 + 1e6 * (v[1] - 1.0) ** 2)
     ill_res = conjugate_gradient(ill, np.array([0.0, 1.0 + 1e-10]), tol=1e-8, max_iter=100)
     assert ill_res.converged and np.allclose(ill_res.x, [10.0, 1.0], atol=1e-4)
+
+    s2 = math.sqrt(2.0)
+    rot_ill = lambda v: float(1.0 + 1e-5 * ((v[0] + v[1]) / s2 - 10.0) ** 2 + 1e6 * ((v[0] - v[1]) / s2 - 1.0) ** 2)
+    x_rot0 = np.array([(9.5 + 1.0 + 1e-11) / s2, (9.5 - 1.0 - 1e-11) / s2])
+    x_rot_star = np.array([11.0 / s2, 9.0 / s2])
+    rot_res = conjugate_gradient(rot_ill, x_rot0, tol=1e-6, max_iter=100)
+    assert (not rot_res.converged) or np.allclose(rot_res.x, x_rot_star, atol=1e-3)
 
     rosen = lambda v: float((1.0 - v[0]) ** 2 + 100.0 * (v[1] - v[0] ** 2) ** 2)
     r_res = conjugate_gradient(rosen, np.array([-1.2, 1.0]), tol=1e-6, max_iter=200)
     assert r_res.converged and np.allclose(r_res.x, [1.0, 1.0], atol=1e-3)
 
-    # Unbounded linear+quadratic objective, non-finite ray cliffs, and non-smooth walls must not report convergence
+    # Unbounded linear+quadratic objectives, saddles, non-finite ray cliffs, and non-smooth walls must not converge
     unb = lambda v: float(1e-4 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
     assert not conjugate_gradient(unb, np.array([5.0, 1.0 + 1e-14]), tol=1e-8, max_iter=20).converged
+    unb_small = lambda v: float(1e5 + 1e-5 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
+    assert not conjugate_gradient(unb_small, np.array([5.0, 1.0 + 1e-14]), tol=1e-6, max_iter=20).converged
+    unb_tiny = lambda v: float(1.0 + 1e-10 * v[0] + 1e10 * (v[1] - 1.0) ** 2)
+    assert not conjugate_gradient(unb_tiny, np.array([5.0, 1.0 + 1e-14]), tol=1e-12, max_iter=20).converged
     cliff = conjugate_gradient(lambda v: float("nan") if v[0] < 0.0 else float((v[0] + 1.0) ** 2), [0.5], max_iter=10)
     assert not cliff.converged and np.all(np.isfinite(cliff.x)) and cliff.fun < 1.5
     nan_res = conjugate_gradient(lambda v: float("nan") if v[0] < 0.999 else float(v[0] ** 2), [1.0, 0.0], max_iter=5)
